@@ -17,7 +17,7 @@ import {
   PolicyEnricher,
 } from "@vardionix/adapters";
 import type { VardionixConfig } from "./config.js";
-import { resolvePolicyDirectories } from "./config.js";
+import { resolvePolicyDirectories, resolveRuleset } from "./config.js";
 
 export class ScanOrchestrator {
   private semgrepRunner: SemgrepRunner;
@@ -50,7 +50,7 @@ export class ScanOrchestrator {
     // Run semgrep
     const semgrepOutput = await this.semgrepRunner.scan({
       targets,
-      ruleset: request.ruleset ?? this.config.semgrep.defaultRuleset,
+      ruleset: resolveRuleset(request.ruleset ?? this.config.semgrep.defaultRuleset),
     });
 
     // Parse and normalize

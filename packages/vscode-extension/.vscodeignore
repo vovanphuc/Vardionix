@@ -1,0 +1,7 @@
+src/**
+tsconfig.json
+build.mjs
+.gitignore
+**/*.ts
+!dist/**
+!node_modules/better-sqlite3/**

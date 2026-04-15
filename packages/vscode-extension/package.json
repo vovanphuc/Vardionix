@@ -1,0 +1,158 @@
+{
+  "name": "vardionix-vscode",
+  "displayName": "Vardionix - DevSecOps",
+  "description": "Unified DevSecOps tool for scanning, triaging, and remediating security findings with Semgrep, Claude, and Codex",
+  "version": "0.1.0",
+  "publisher": "vardionix",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "security",
+    "semgrep",
+    "devsecops",
+    "vulnerability",
+    "scanner"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vardionix.scanCurrentFile",
+        "title": "Vardionix: Scan Current File",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "vardionix.scanStagedFiles",
+        "title": "Vardionix: Scan Staged Files",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "vardionix.scanWorkspace",
+        "title": "Vardionix: Scan Workspace",
+        "icon": "$(folder)"
+      },
+      {
+        "command": "vardionix.listFindings",
+        "title": "Vardionix: List Findings",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "vardionix.explainFinding",
+        "title": "Vardionix: Explain Finding",
+        "icon": "$(info)"
+      },
+      {
+        "command": "vardionix.dismissFinding",
+        "title": "Vardionix: Dismiss Finding",
+        "icon": "$(close)"
+      },
+      {
+        "command": "vardionix.showPolicy",
+        "title": "Vardionix: Show Policy",
+        "icon": "$(law)"
+      },
+      {
+        "command": "vardionix.refreshFindings",
+        "title": "Vardionix: Refresh Findings",
+        "icon": "$(refresh)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vardionix",
+          "title": "Vardionix",
+          "icon": "$(shield)"
+        }
+      ]
+    },
+    "views": {
+      "vardionix": [
+        {
+          "id": "vardionixFindings",
+          "name": "Security Findings",
+          "type": "tree"
+        }
+      ]
+    },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "vardionix.scanCurrentFile",
+          "group": "navigation",
+          "when": "editorIsOpen"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "vardionix.refreshFindings",
+          "when": "view == vardionixFindings",
+          "group": "navigation"
+        },
+        {
+          "command": "vardionix.scanStagedFiles",
+          "when": "view == vardionixFindings",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vardionix.explainFinding",
+          "when": "view == vardionixFindings && viewItem == finding",
+          "group": "inline"
+        },
+        {
+          "command": "vardionix.dismissFinding",
+          "when": "view == vardionixFindings && viewItem == finding"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Vardionix",
+      "properties": {
+        "vardionix.semgrepPath": {
+          "type": "string",
+          "default": "semgrep",
+          "description": "Path to the Semgrep binary"
+        },
+        "vardionix.defaultRuleset": {
+          "type": "string",
+          "default": "auto",
+          "description": "Default Semgrep ruleset to use"
+        },
+        "vardionix.scanOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically scan files on save"
+        },
+        "vardionix.severityFilter": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "info"]
+          },
+          "description": "Only show findings at or above these severity levels"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "vscode:prepublish": "node build.mjs",
+    "package": "npx @vscode/vsce package --no-dependencies --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.25.4"
+  },
+  "dependencies": {}
+}

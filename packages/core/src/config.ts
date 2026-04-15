@@ -1,10 +1,7 @@
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
 import YAML from "yaml";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export interface VardionixConfig {
   semgrep: {
@@ -48,15 +45,47 @@ export function getConfigPath(): string {
   return join(homedir(), ".vardionix", "config.yaml");
 }
 
-export function getBuiltInPoliciesDir(): string {
-  // Resolve from package root
-  const packageRoot = join(__dirname, "..", "..");
-  const policiesDir = join(packageRoot, "policies");
-  if (existsSync(policiesDir)) return policiesDir;
+/**
+ * Search for a named directory by checking multiple candidate paths.
+ * Works in both ESM (monorepo) and CJS (bundled extension) contexts.
+ */
+function findDir(name: string): string {
+  const candidates = [
+    // 1. Relative to cwd (monorepo development)
+    join(process.cwd(), name),
+    // 2. Relative to the main script (bundled extension)
+    join(dirname(process.argv[1] ?? ""), name),
+    // 3. Walk up from cwd
+    join(process.cwd(), "..", name),
+    join(process.cwd(), "..", "..", name),
+    // 4. Home directory config
+    join(homedir(), ".vardionix", name),
+  ];
 
-  // Try from monorepo root
-  const monorepoRoot = join(__dirname, "..", "..", "..", "..");
-  return join(monorepoRoot, "policies");
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+
+  return candidates[0]; // fallback to cwd-based
+}
+
+export function getBuiltInPoliciesDir(): string {
+  return findDir("policies");
+}
+
+export function getBuiltInRulesDir(): string {
+  return findDir("rules");
+}
+
+export function resolveRuleset(ruleset: string): string {
+  if (ruleset === "auto") {
+    // Use built-in rules if available, otherwise pass "auto" to semgrep
+    const rulesDir = getBuiltInRulesDir();
+    const defaultRules = join(rulesDir, "default.yaml");
+    if (existsSync(defaultRules)) return defaultRules;
+    return ruleset;
+  }
+  return ruleset;
 }
 
 export function loadConfig(configPath?: string): VardionixConfig {

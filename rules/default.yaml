@@ -1,0 +1,104 @@
+rules:
+  - id: python.lang.security.audit.sql-injection.string-concat
+    pattern: |
+      cursor.execute($X + ...)
+    message: >
+      Detected SQL query built with string concatenation.
+      Use parameterized queries instead to prevent SQL injection.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  - id: python.lang.security.audit.command-injection.os-system
+    pattern: |
+      os.system($X + ...)
+    message: >
+      Detected shell command built with string concatenation.
+      Use subprocess with a list of arguments instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  - id: python.lang.security.audit.hardcoded-secret.secret-key
+    patterns:
+      - pattern: |
+          $VAR = "..."
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)(secret|password|api_key|token|private_key)
+    message: >
+      Detected hardcoded secret in source code.
+      Use environment variables or a secrets manager instead.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-798"]
+      confidence: MEDIUM
+
+  - id: javascript.lang.security.audit.xss.innerhtml
+    pattern: |
+      $X.innerHTML = ...
+    message: >
+      Setting innerHTML with dynamic data can lead to Cross-Site Scripting (XSS).
+      Use textContent or a sanitization library instead.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  - id: javascript.lang.security.audit.eval
+    pattern: |
+      eval(...)
+    message: >
+      Use of eval() is dangerous. Arbitrary code can be executed.
+      Use safer alternatives like JSON.parse() for data parsing.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-95"]
+      confidence: HIGH
+
+  - id: generic.security.audit.hardcoded-password
+    patterns:
+      - pattern: |
+          $VAR = "..."
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)(password|passwd|pwd)
+    message: >
+      Detected hardcoded password.
+      Use environment variables or a secrets manager.
+    languages: [python, javascript, typescript, go, java, ruby]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-798"]
+      confidence: MEDIUM
+
+  - id: go.lang.security.audit.nil-dereference.unchecked-error
+    patterns:
+      - pattern: |
+          $VAL, $ERR := $FUNC(...)
+          ...
+          $VAL.$FIELD
+      - pattern-not: |
+          $VAL, $ERR := $FUNC(...)
+          ...
+          if $ERR != nil { ... }
+          ...
+          $VAL.$FIELD
+    message: >
+      Potential nil dereference. The return value is used without
+      checking the error. Guard nil values after error-returning functions.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-476"]
+      confidence: MEDIUM

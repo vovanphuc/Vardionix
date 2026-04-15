@@ -1,10 +1,61 @@
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+// Inline migration SQL to avoid file-path issues when bundled
+const MIGRATION_001 = `
+CREATE TABLE IF NOT EXISTS findings (
+  id TEXT PRIMARY KEY,
+  rule_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'semgrep',
+  severity TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  start_line INTEGER NOT NULL,
+  end_line INTEGER NOT NULL,
+  start_col INTEGER,
+  end_col INTEGER,
+  code_snippet TEXT,
+  metadata TEXT,
+  policy_id TEXT,
+  policy_title TEXT,
+  policy_severity_override TEXT,
+  remediation_guidance TEXT,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  dismissed_at TEXT,
+  dismissed_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status);
+CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity);
+CREATE INDEX IF NOT EXISTS idx_findings_file ON findings(file_path);
+CREATE INDEX IF NOT EXISTS idx_findings_rule ON findings(rule_id);
+
+CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT PRIMARY KEY,
+  template_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  finding_id TEXT,
+  created_at TEXT NOT NULL,
+  completed_at TEXT,
+  result TEXT,
+  logs TEXT
+);
+
+CREATE TABLE IF NOT EXISTS scan_runs (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  target TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  total_findings INTEGER,
+  findings_by_severity TEXT
+);
+`;
 
 let db: Database.Database | null = null;
 
@@ -50,23 +101,8 @@ function runMigrations(database: Database.Database): void {
       .map((row) => (row as { version: number }).version),
   );
 
-  const migrationsDir = join(__dirname, "..", "src", "migrations");
-  // Also check dist-relative path for when running from built code
-  const distMigrationsDir = join(__dirname, "migrations");
-
-  let migrationSql: string | null = null;
-
-  if (existsSync(join(migrationsDir, "001-init.sql"))) {
-    migrationSql = readFileSync(join(migrationsDir, "001-init.sql"), "utf-8");
-  } else if (existsSync(join(distMigrationsDir, "001-init.sql"))) {
-    migrationSql = readFileSync(
-      join(distMigrationsDir, "001-init.sql"),
-      "utf-8",
-    );
-  }
-
-  if (migrationSql && !applied.has(1)) {
-    database.exec(migrationSql);
+  if (!applied.has(1)) {
+    database.exec(MIGRATION_001);
     database
       .prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)")
       .run(1, new Date().toISOString());

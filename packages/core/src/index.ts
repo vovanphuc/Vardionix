@@ -3,6 +3,8 @@ export {
   initConfig,
   getConfigPath,
   getBuiltInPoliciesDir,
+  getBuiltInRulesDir,
+  resolveRuleset,
   resolvePolicyDirectories,
   type VardionixConfig,
 } from "./config.js";
