@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS findings (
   remediation_guidance TEXT,
   first_seen_at TEXT NOT NULL,
   last_seen_at TEXT NOT NULL,
+  confidence_score REAL,
+  exploit_scenario TEXT,
+  category TEXT,
+  excluded INTEGER NOT NULL DEFAULT 0,
+  exclusion_reason TEXT,
   dismissed_at TEXT,
   dismissed_reason TEXT
 );

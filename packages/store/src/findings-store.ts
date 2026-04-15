@@ -32,6 +32,11 @@ function rowToFinding(row: Record<string, unknown>): Finding {
     endCol: row.end_col as number | undefined,
     codeSnippet: row.code_snippet as string | undefined,
     metadata: row.metadata ? JSON.parse(row.metadata as string) : undefined,
+    confidenceScore: row.confidence_score as number | null,
+    exploitScenario: row.exploit_scenario as string | null,
+    category: row.category as Finding["category"],
+    excluded: (row.excluded as number) === 1,
+    exclusionReason: row.exclusion_reason as string | null,
     policyId: row.policy_id as string | null,
     policyTitle: row.policy_title as string | null,
     policySeverityOverride: row.policy_severity_override as Finding["policySeverityOverride"],
@@ -51,13 +56,17 @@ export class FindingsStore {
       INSERT INTO findings (
         id, rule_id, source, severity, status, title, message,
         file_path, start_line, end_line, start_col, end_col,
-        code_snippet, metadata, policy_id, policy_title,
+        code_snippet, metadata,
+        confidence_score, exploit_scenario, category, excluded, exclusion_reason,
+        policy_id, policy_title,
         policy_severity_override, remediation_guidance,
         first_seen_at, last_seen_at, dismissed_at, dismissed_reason
       ) VALUES (
         @id, @ruleId, @source, @severity, @status, @title, @message,
         @filePath, @startLine, @endLine, @startCol, @endCol,
-        @codeSnippet, @metadata, @policyId, @policyTitle,
+        @codeSnippet, @metadata,
+        @confidenceScore, @exploitScenario, @category, @excluded, @exclusionReason,
+        @policyId, @policyTitle,
         @policySeverityOverride, @remediationGuidance,
         @firstSeenAt, @lastSeenAt, @dismissedAt, @dismissedReason
       )
@@ -90,6 +99,11 @@ export class FindingsStore {
       endCol: finding.endCol ?? null,
       codeSnippet: finding.codeSnippet ?? null,
       metadata: finding.metadata ? JSON.stringify(finding.metadata) : null,
+      confidenceScore: finding.confidenceScore,
+      exploitScenario: finding.exploitScenario,
+      category: finding.category,
+      excluded: finding.excluded ? 1 : 0,
+      exclusionReason: finding.exclusionReason,
       policyId: finding.policyId,
       policyTitle: finding.policyTitle,
       policySeverityOverride: finding.policySeverityOverride,

@@ -18,6 +18,14 @@ export {
   type EnrichedFinding,
 } from "./policy/index.js";
 
+// Findings filter (inspired by claude-code-security-review)
+export {
+  filterFindings,
+  applyHardExclusions,
+  applyConfidenceThreshold,
+  type FilterResult,
+} from "./filter/index.js";
+
 // Backend.AI adapter
 export {
   BackendAIClient,

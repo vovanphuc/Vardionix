@@ -16,6 +16,26 @@ export const FindingSchema = z.object({
   endCol: z.number().int().optional(),
   codeSnippet: z.string().optional(),
   metadata: z.record(z.unknown()).optional(),
+  // Confidence & exploit context (inspired by claude-code-security-review)
+  confidenceScore: z.number().min(0).max(1).nullable().default(null),
+  exploitScenario: z.string().nullable().default(null),
+  category: z
+    .enum([
+      "input-validation",
+      "auth-bypass",
+      "crypto-weakness",
+      "code-execution",
+      "data-exposure",
+      "csrf",
+      "ssrf",
+      "path-traversal",
+      "other",
+    ])
+    .nullable()
+    .default(null),
+  // False-positive filtering
+  excluded: z.boolean().default(false),
+  exclusionReason: z.string().nullable().default(null),
   policyId: z.string().nullable().default(null),
   policyTitle: z.string().nullable().default(null),
   policySeverityOverride: z.nativeEnum(Severity).nullable().default(null),

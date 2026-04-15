@@ -1,0 +1,149 @@
+name: Vardionix Security Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  security-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Python (for Semgrep)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Vardionix
+        run: npm run build
+
+      - name: Get changed files
+        id: changed-files
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -vE '\.(md|txt|json|yml|yaml|lock)$' | head -50 || true)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "count=$(echo "$FILES" | grep -c . || echo 0)" >> $GITHUB_OUTPUT
+
+      - name: Scan changed files
+        if: steps.changed-files.outputs.count != '0'
+        id: scan
+        run: |
+          RESULTS_FILE=$(mktemp)
+          TOTAL=0
+          HIGH=0
+          CRITICAL=0
+
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            [ ! -f "$file" ] && continue
+
+            echo "Scanning: $file"
+            RESULT=$(node packages/cli/dist/index.js scan file "$file" --json 2>/dev/null || echo '{"totalFindings":0}')
+            COUNT=$(echo "$RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.totalFindings||0)" 2>/dev/null || echo 0)
+            TOTAL=$((TOTAL + COUNT))
+
+            H=$(echo "$RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.findingsBySeverity?.high||0)" 2>/dev/null || echo 0)
+            C=$(echo "$RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.findingsBySeverity?.critical||0)" 2>/dev/null || echo 0)
+            HIGH=$((HIGH + H))
+            CRITICAL=$((CRITICAL + C))
+          done <<< "${{ steps.changed-files.outputs.files }}"
+
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "high=$HIGH" >> $GITHUB_OUTPUT
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+
+          # Get all open findings as JSON
+          node packages/cli/dist/index.js findings list --open-only --json > "$RESULTS_FILE" 2>/dev/null || echo "[]" > "$RESULTS_FILE"
+          echo "results-file=$RESULTS_FILE" >> $GITHUB_OUTPUT
+
+      - name: Comment PR with findings
+        if: steps.scan.outputs.total != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const total = parseInt('${{ steps.scan.outputs.total }}') || 0;
+            const high = parseInt('${{ steps.scan.outputs.high }}') || 0;
+            const critical = parseInt('${{ steps.scan.outputs.critical }}') || 0;
+
+            if (total === 0) return;
+
+            const severity = critical > 0 ? ':red_circle:' : high > 0 ? ':orange_circle:' : ':yellow_circle:';
+
+            const body = [
+              `## ${severity} Vardionix Security Review`,
+              '',
+              `| Severity | Count |`,
+              `|----------|-------|`,
+              `| Critical | ${critical} |`,
+              `| High | ${high} |`,
+              `| Total | ${total} |`,
+              '',
+              'Run `vardionix findings list --open-only` for details.',
+              'Run `vardionix explain <F-ID>` to understand specific findings.',
+              '',
+              '> This review was performed by [Vardionix](https://github.com/vovanphuc/vardionix) using Semgrep with internal policy enrichment.',
+            ].join('\n');
+
+            // Find existing comment
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.data.find(c =>
+              c.body?.includes('Vardionix Security Review')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Upload results
+        if: always() && steps.scan.outputs.results-file
+        uses: actions/upload-artifact@v4
+        with:
+          name: vardionix-security-results
+          path: ${{ steps.scan.outputs.results-file }}
+          retention-days: 30
+
+      - name: Fail on critical findings
+        if: steps.scan.outputs.critical != '0'
+        run: |
+          echo "::error::Found ${{ steps.scan.outputs.critical }} critical security finding(s)"
+          exit 1

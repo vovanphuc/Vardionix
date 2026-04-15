@@ -1,0 +1,45 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node packages/cli/dist/index.js scan file \"$VARDIONIX_FILE\" --json --severity high,critical --fail-on critical 2>/dev/null || true",
+            "description": "Auto-scan edited files for critical security issues"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '$TOOL_INPUT' | grep -qiE '(rm -rf /|curl.*\\|.*sh|wget.*\\|.*bash|eval\\(|exec\\()' && echo 'BLOCK: Potentially dangerous command detected. Review before executing.' && exit 1 || exit 0",
+            "description": "Block potentially dangerous shell commands"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node packages/cli/dist/index.js scan staged --json --severity high,critical 2>/dev/null | node -e \"const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); if(d.totalFindings>0){console.log('WARNING: '+d.totalFindings+' high/critical finding(s) in staged files. Run /security-review before committing.')}\" 2>/dev/null || true",
+            "description": "Warn about unresolved security findings before task completion"
+          }
+        ]
+      }
+    ]
+  },
+  "mcpServers": {
+    "vardionix": {
+      "command": "node",
+      "args": ["packages/mcp-server/dist/index.js"]
+    }
+  }
+}

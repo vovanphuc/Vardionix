@@ -15,6 +15,7 @@ import {
   normalizeFindings,
   PolicyLocalStore,
   PolicyEnricher,
+  filterFindings,
 } from "@vardionix/adapters";
 import type { VardionixConfig } from "./config.js";
 import { resolvePolicyDirectories, resolveRuleset } from "./config.js";
@@ -67,8 +68,15 @@ export class ScanOrchestrator {
     // Enrich with policy data
     findings = this.policyEnricher.enrichFindings(findings);
 
-    // Persist findings
+    // Apply two-stage false-positive filtering (from claude-code-security-review)
+    const filterResult = filterFindings(findings, {
+      confidenceThreshold: 0.8,
+    });
+    findings = filterResult.kept;
+
+    // Persist both kept and excluded findings
     this.findingsStore.upsertFindings(findings);
+    this.findingsStore.upsertFindings(filterResult.excluded);
 
     // Compute stats
     const findingsBySeverity = this.computeSeverityStats(findings);
