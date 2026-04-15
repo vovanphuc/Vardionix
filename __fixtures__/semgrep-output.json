@@ -1,0 +1,114 @@
+{
+  "version": "1.56.0",
+  "results": [
+    {
+      "check_id": "javascript.lang.security.audit.xss.no-direct-innerhtml",
+      "path": "src/components/comment.js",
+      "start": { "line": 42, "col": 5, "offset": 1024 },
+      "end": { "line": 42, "col": 65, "offset": 1084 },
+      "extra": {
+        "message": "Setting innerHTML with user-controlled data can lead to Cross-Site Scripting (XSS).",
+        "severity": "WARNING",
+        "metadata": {
+          "cwe": ["CWE-79"],
+          "owasp": ["A03:2021"],
+          "confidence": "HIGH"
+        },
+        "lines": "element.innerHTML = userInput;",
+        "is_ignored": false,
+        "fingerprint": "abc123def456"
+      }
+    },
+    {
+      "check_id": "python.lang.security.audit.sql-injection.sql-injection",
+      "path": "src/api/users.py",
+      "start": { "line": 87, "col": 5, "offset": 2048 },
+      "end": { "line": 89, "col": 30, "offset": 2150 },
+      "extra": {
+        "message": "Detected SQL query built with string concatenation. Use parameterized queries instead.",
+        "severity": "ERROR",
+        "metadata": {
+          "cwe": ["CWE-89"],
+          "owasp": ["A03:2021"],
+          "confidence": "HIGH"
+        },
+        "lines": "cursor.execute(\"SELECT * FROM users WHERE id = \" + user_id)",
+        "is_ignored": false,
+        "fingerprint": "def456ghi789"
+      }
+    },
+    {
+      "check_id": "go.lang.security.audit.bad-reset-token",
+      "path": "src/auth/reset.go",
+      "start": { "line": 87, "col": 2, "offset": 3072 },
+      "end": { "line": 90, "col": 40, "offset": 3200 },
+      "extra": {
+        "message": "Potential nil dereference after token verification failure. The return value of VerifyResetToken is used without checking the error.",
+        "severity": "WARNING",
+        "metadata": {
+          "cwe": ["CWE-476"],
+          "confidence": "MEDIUM"
+        },
+        "lines": "creator, err := VerifyResetToken(token)\nif err != nil {\n    log.Error(err)\n}\nstatus := creator.Status",
+        "is_ignored": false,
+        "fingerprint": "ghi789jkl012"
+      }
+    },
+    {
+      "check_id": "generic.secrets.security.detected-aws-access-key",
+      "path": "config/settings.js",
+      "start": { "line": 12, "col": 1, "offset": 256 },
+      "end": { "line": 12, "col": 60, "offset": 315 },
+      "extra": {
+        "message": "Detected a hardcoded AWS access key. Use environment variables or a secrets manager.",
+        "severity": "ERROR",
+        "metadata": {
+          "cwe": ["CWE-798"],
+          "confidence": "HIGH"
+        },
+        "lines": "const AWS_KEY = 'AKIA...'",
+        "is_ignored": false,
+        "fingerprint": "jkl012mno345"
+      }
+    },
+    {
+      "check_id": "python.lang.security.audit.debug-enabled",
+      "path": "src/app.py",
+      "start": { "line": 5, "col": 1, "offset": 64 },
+      "end": { "line": 5, "col": 30, "offset": 93 },
+      "extra": {
+        "message": "Debug mode is enabled in production configuration.",
+        "severity": "INFO",
+        "metadata": {},
+        "lines": "app.debug = True",
+        "is_ignored": false,
+        "fingerprint": "mno345pqr678"
+      }
+    },
+    {
+      "check_id": "javascript.lang.security.audit.xss.ignored-finding",
+      "path": "src/test/mock.js",
+      "start": { "line": 10, "col": 1, "offset": 128 },
+      "end": { "line": 10, "col": 40, "offset": 167 },
+      "extra": {
+        "message": "This finding is ignored via nosemgrep comment.",
+        "severity": "WARNING",
+        "metadata": {},
+        "lines": "test.innerHTML = data; // nosemgrep",
+        "is_ignored": true,
+        "fingerprint": "pqr678stu901"
+      }
+    }
+  ],
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "src/components/comment.js",
+      "src/api/users.py",
+      "src/auth/reset.go",
+      "config/settings.js",
+      "src/app.py",
+      "src/test/mock.js"
+    ]
+  }
+}

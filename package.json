@@ -1,0 +1,25 @@
+{
+  "name": "vardionix-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --build",
+    "clean": "rm -rf packages/*/dist"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.3",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.1.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

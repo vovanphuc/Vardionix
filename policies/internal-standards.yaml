@@ -1,0 +1,62 @@
+policies:
+  - id: SEC-GO-014
+    title: "Guard nil values after error-returning verification functions"
+    description: "Do not dereference values returned alongside error paths. Functions that return (value, error) must have the error checked before the value is used."
+    category: "CWE-476"
+    severity_override: high
+    rule_patterns:
+      - "go.lang.security.audit.bad-reset-token"
+      - "go.lang.security.audit.nil-dereference.*"
+    remediation_guidance: "Return immediately after VerifyResetToken error. Guard nil creator before accessing creator.Status. Never dereference values coupled with failed error result."
+    references:
+      - "https://cwe.mitre.org/data/definitions/476.html"
+
+  - id: SEC-JS-001
+    title: "Prevent prototype pollution"
+    description: "Object merge/clone operations must not allow __proto__ or constructor.prototype manipulation from untrusted input."
+    category: "CWE-1321"
+    severity_override: high
+    rule_patterns:
+      - "javascript.lang.security.audit.prototype-pollution.*"
+      - "typescript.lang.security.audit.prototype-pollution.*"
+    remediation_guidance: "Use Object.create(null) for lookup maps. Filter __proto__ and constructor keys from user input. Use safe deep-merge libraries."
+    references:
+      - "https://cwe.mitre.org/data/definitions/1321.html"
+
+  - id: SEC-PY-003
+    title: "Avoid unsafe pickle deserialization"
+    description: "Never deserialize untrusted data with pickle. Use JSON or MessagePack instead."
+    category: "CWE-502"
+    severity_override: critical
+    rule_patterns:
+      - "python.lang.security.audit.pickle.*"
+      - "python.lang.security.deserialization.*"
+    remediation_guidance: "Replace pickle.loads with json.loads or msgpack.unpackb for untrusted data. If pickle is required, use hmac signing and restrict allowed classes."
+    references:
+      - "https://cwe.mitre.org/data/definitions/502.html"
+
+  - id: SEC-GENERAL-001
+    title: "No hardcoded credentials in source"
+    description: "API keys, passwords, and tokens must not be committed to source control."
+    category: "CWE-798"
+    severity_override: critical
+    rule_patterns:
+      - "*.security.audit.hardcoded-secret.*"
+      - "*.security.audit.hardcoded-password.*"
+      - "*.security.audit.hardcoded-token.*"
+      - "generic.secrets.*"
+    remediation_guidance: "Use environment variables or a secrets manager. Add patterns to .gitignore. Rotate any credentials that were committed."
+    references:
+      - "https://cwe.mitre.org/data/definitions/798.html"
+
+  - id: SEC-GENERAL-002
+    title: "Validate file path inputs"
+    description: "File operations using user-supplied paths must validate against path traversal."
+    category: "CWE-22"
+    severity_override: high
+    rule_patterns:
+      - "*.security.audit.path-traversal.*"
+      - "*.security.audit.directory-traversal.*"
+    remediation_guidance: "Canonicalize paths with path.resolve(). Validate the resolved path is within the expected base directory. Use allowlists for permitted directories."
+    references:
+      - "https://cwe.mitre.org/data/definitions/22.html"

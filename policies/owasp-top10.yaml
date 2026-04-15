@@ -1,0 +1,113 @@
+policies:
+  - id: POL-A01-BROKEN-ACCESS
+    title: "Broken Access Control"
+    description: "Restrictions on authenticated users are not properly enforced. Attackers can exploit flaws to access unauthorized functionality or data."
+    category: "OWASP-A01"
+    severity_override: high
+    rule_patterns:
+      - "*.security.audit.access-control.*"
+      - "*.security.audit.authorization.*"
+      - "*.security.audit.idor.*"
+    remediation_guidance: "Implement proper access control checks. Use deny-by-default. Validate permissions server-side for every request."
+    references:
+      - "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+
+  - id: POL-A02-CRYPTO-FAILURE
+    title: "Cryptographic Failures"
+    description: "Sensitive data exposure due to weak or missing cryptography."
+    category: "OWASP-A02"
+    severity_override: high
+    rule_patterns:
+      - "*.security.audit.crypto.*"
+      - "*.security.audit.weak-hash.*"
+      - "*.security.audit.weak-cipher.*"
+      - "*.security.audit.hardcoded-secret.*"
+    remediation_guidance: "Use strong, up-to-date cryptographic algorithms. Never hardcode secrets. Encrypt sensitive data at rest and in transit."
+    references:
+      - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+
+  - id: POL-A03-INJECTION
+    title: "Injection"
+    description: "User-supplied data is not validated, filtered, or sanitized, leading to injection attacks (SQL, NoSQL, OS command, LDAP, XSS)."
+    category: "OWASP-A03"
+    severity_override: critical
+    rule_patterns:
+      - "*.security.audit.xss.*"
+      - "*.security.audit.sql-injection.*"
+      - "*.security.audit.command-injection.*"
+      - "*.security.audit.ldap-injection.*"
+      - "*.lang.security.injection.*"
+    remediation_guidance: "Use parameterized queries or prepared statements. Validate and sanitize all user input. Use allowlists for command arguments."
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection/"
+
+  - id: POL-A04-INSECURE-DESIGN
+    title: "Insecure Design"
+    description: "Missing or ineffective security controls and design patterns."
+    category: "OWASP-A04"
+    rule_patterns:
+      - "*.security.audit.insecure-design.*"
+    remediation_guidance: "Use threat modeling. Apply secure design patterns. Implement defense-in-depth strategies."
+    references:
+      - "https://owasp.org/Top10/A04_2021-Insecure_Design/"
+
+  - id: POL-A05-SECURITY-MISCONFIG
+    title: "Security Misconfiguration"
+    description: "Missing security hardening, default configurations, open cloud storage, verbose error messages."
+    category: "OWASP-A05"
+    severity_override: medium
+    rule_patterns:
+      - "*.security.audit.misconfiguration.*"
+      - "*.security.audit.default-credentials.*"
+      - "*.security.audit.debug-enabled.*"
+    remediation_guidance: "Remove default credentials. Disable debug modes in production. Apply minimal permissions. Review security headers."
+    references:
+      - "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+
+  - id: POL-A07-AUTH-FAILURE
+    title: "Identification and Authentication Failures"
+    description: "Weak authentication mechanisms, credential stuffing, session fixation."
+    category: "OWASP-A07"
+    severity_override: high
+    rule_patterns:
+      - "*.security.audit.auth.*"
+      - "*.security.audit.session.*"
+      - "*.security.audit.password.*"
+      - "*.security.audit.bad-reset-token.*"
+    remediation_guidance: "Implement multi-factor authentication. Use strong password policies. Protect against brute force. Properly invalidate sessions."
+    references:
+      - "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
+
+  - id: POL-A08-INTEGRITY-FAILURE
+    title: "Software and Data Integrity Failures"
+    description: "Code and infrastructure that does not protect against integrity violations (insecure deserialization, untrusted sources)."
+    category: "OWASP-A08"
+    severity_override: high
+    rule_patterns:
+      - "*.security.audit.deserialization.*"
+      - "*.security.audit.insecure-deserialization.*"
+    remediation_guidance: "Verify software integrity with digital signatures. Use safe deserialization methods. Validate all serialized data."
+    references:
+      - "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"
+
+  - id: POL-A09-LOGGING-FAILURE
+    title: "Security Logging and Monitoring Failures"
+    description: "Insufficient logging, monitoring, and alerting allowing breaches to go undetected."
+    category: "OWASP-A09"
+    rule_patterns:
+      - "*.security.audit.logging.*"
+    remediation_guidance: "Log all authentication events, access control failures, and input validation failures. Implement alerting for suspicious activity."
+    references:
+      - "https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/"
+
+  - id: POL-A10-SSRF
+    title: "Server-Side Request Forgery (SSRF)"
+    description: "Web application fetches a remote resource without validating the user-supplied URL."
+    category: "OWASP-A10"
+    severity_override: high
+    rule_patterns:
+      - "*.security.audit.ssrf.*"
+      - "*.security.audit.request-forgery.*"
+    remediation_guidance: "Validate and allowlist destination URLs. Block requests to internal/private IP ranges. Use network-level controls."
+    references:
+      - "https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_(SSRF)/"
