@@ -4,6 +4,12 @@
   "description": "Unified DevSecOps tool for scanning, triaging, and remediating security findings with Semgrep, Claude, and Codex",
   "version": "0.1.0",
   "publisher": "vardionix",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vovanphuc/vardionix"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },

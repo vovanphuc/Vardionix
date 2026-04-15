@@ -80,6 +80,34 @@ if (existsSync(betterSqliteDir)) {
   console.log("Copied better-sqlite3 native module to dist/node_modules/");
 }
 
+// Copy 'bindings' package (required by better-sqlite3 to locate the .node addon)
+const bindingsDir = join(monorepoRoot, "node_modules", "bindings");
+if (existsSync(bindingsDir)) {
+  const targetDir = join(__dirname, "dist", "node_modules", "bindings");
+  mkdirSync(targetDir, { recursive: true });
+  for (const entry of readdirSync(bindingsDir)) {
+    const srcPath = join(bindingsDir, entry);
+    if (!statSync(srcPath).isDirectory()) {
+      copyFileSync(srcPath, join(targetDir, entry));
+    }
+  }
+  console.log("Copied bindings to dist/node_modules/");
+}
+
+// Copy 'file-uri-to-path' package (dependency of bindings)
+const fileUriDir = join(monorepoRoot, "node_modules", "file-uri-to-path");
+if (existsSync(fileUriDir)) {
+  const targetDir = join(__dirname, "dist", "node_modules", "file-uri-to-path");
+  mkdirSync(targetDir, { recursive: true });
+  for (const entry of readdirSync(fileUriDir)) {
+    const srcPath = join(fileUriDir, entry);
+    if (!statSync(srcPath).isDirectory()) {
+      copyFileSync(srcPath, join(targetDir, entry));
+    }
+  }
+  console.log("Copied file-uri-to-path to dist/node_modules/");
+}
+
 function copyDirSync(src, dest) {
   if (!existsSync(src)) return;
   mkdirSync(dest, { recursive: true });
