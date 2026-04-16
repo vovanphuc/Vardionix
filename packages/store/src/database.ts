@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import initSqlJsModule from "sql.js/dist/sql-asm.js";
+import initSqlJsModule from "sql.js/dist/sql-asm-memory-growth.js";
 import type { Database as SqlJsDatabase } from "sql.js";
 import { SqlJsDatabaseAdapter, type DatabaseLike } from "./sqlite.js";
 
