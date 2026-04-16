@@ -14,6 +14,8 @@ const vscodeState = vi.hoisted(() => ({
     setFindings: (findings: unknown[]) => void;
     getSeverityCounts: () => Record<string, number>;
   }>,
+  ensureSemgrep: vi.fn(() => Promise.resolve()),
+  hasSemgrepAvailable: vi.fn(() => true),
 }));
 
 vi.mock("vscode", () => ({
@@ -89,7 +91,8 @@ vi.mock("../src/diagnostics.ts", () => ({
 }));
 
 vi.mock("../src/semgrep-downloader.ts", () => ({
-  ensureSemgrep: () => Promise.resolve(),
+  ensureSemgrep: (...args: any[]) => vscodeState.ensureSemgrep(...args),
+  hasSemgrepAvailable: () => vscodeState.hasSemgrepAvailable(),
   getSemgrepPath: () => "semgrep",
   waitForSemgrep: () => Promise.resolve(),
 }));
@@ -135,6 +138,9 @@ describe("VS Code extension integration", () => {
     vscodeState.updateDiagnostics.mockReset();
     vscodeState.runVardionix.mockReset();
     vscodeState.findingsTreeInstances.length = 0;
+    vscodeState.ensureSemgrep.mockClear();
+    vscodeState.hasSemgrepAvailable.mockReset();
+    vscodeState.hasSemgrepAvailable.mockReturnValue(true);
   });
 
   it("loads active findings into the tree and diagnostics via the CLI bridge", async () => {
@@ -200,5 +206,18 @@ describe("VS Code extension integration", () => {
     expect(vscodeState.panels).toHaveLength(1);
     expect(vscodeState.panels[0].webview.html).toContain("Low confidence");
     expect(vscodeState.panels[0].webview.html).toContain("F-excluded");
+  });
+
+  it("blocks scans when automatic Semgrep setup still has no executable", async () => {
+    vscodeState.hasSemgrepAvailable.mockReturnValue(false);
+
+    activate({ subscriptions: [], globalStorageUri: { fsPath: "/tmp/storage" } } as any);
+    await vscodeState.commands.get("vardionix.scanWorkspace")?.();
+
+    expect(vscodeState.ensureSemgrep).toHaveBeenCalled();
+    expect(vscodeState.runVardionix).not.toHaveBeenCalled();
+    expect(vscodeState.errorMessages).toContain(
+      "Vardionix: Semgrep setup failed. The extension tried to install Semgrep automatically but it is still unavailable.",
+    );
   });
 });

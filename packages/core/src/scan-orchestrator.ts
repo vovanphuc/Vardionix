@@ -53,6 +53,7 @@ class TargetResolver {
       const output = execSync("git diff --cached --name-only --diff-filter=ACMR", {
         encoding: "utf-8",
         timeout: 10_000,
+        stdio: "pipe",
       }).trim();
 
       if (!output) return [];
@@ -69,6 +70,7 @@ class TargetResolver {
       return execSync("git rev-parse --show-toplevel", {
         encoding: "utf-8",
         timeout: 5_000,
+        stdio: "pipe",
       }).trim();
     } catch {
       return process.cwd();

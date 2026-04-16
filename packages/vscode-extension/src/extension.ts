@@ -8,14 +8,16 @@ import {
 } from "./diagnostics";
 import { FindingsTreeProvider, FindingItem } from "./findings-tree";
 import { createStatusBar, updateStatusBar, setStatusBarScanning } from "./status-bar";
-import { ensureSemgrep } from "./semgrep-downloader";
+import { ensureSemgrep, hasSemgrepAvailable } from "./semgrep-downloader";
 
 let diagnosticCollection: vscode.DiagnosticCollection;
 let findingsTreeProvider: FindingsTreeProvider;
+let semgrepStorageUri: vscode.Uri | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   diagnosticCollection = createDiagnosticCollection();
   findingsTreeProvider = new FindingsTreeProvider();
+  semgrepStorageUri = context.globalStorageUri;
 
   // Ensure Semgrep is available (downloads if needed, runs in background)
   ensureSemgrep(context.globalStorageUri);
@@ -63,6 +65,8 @@ export function deactivate(): void {
 // === Scan commands ===
 
 async function scanCurrentFile(): Promise<void> {
+  if (!(await ensureSemgrepForScan())) return;
+
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
     vscode.window.showWarningMessage("Vardionix: No active file to scan.");
@@ -105,6 +109,8 @@ async function scanFile(filePath: string): Promise<void> {
 }
 
 async function scanStagedFiles(): Promise<void> {
+  if (!(await ensureSemgrepForScan())) return;
+
   const cwd = getWorkspaceCwd();
   if (!cwd) return;
 
@@ -122,7 +128,7 @@ async function scanStagedFiles(): Promise<void> {
       const result = await runVardionix(["scan", "staged"], cwd);
 
       if (!result.success) {
-        vscode.window.showErrorMessage(`Vardionix: Scan failed — ${result.error}`);
+        vscode.window.showErrorMessage(formatScanError(result.error, "staged"));
         syncStatusBar();
         return;
       }
@@ -138,6 +144,8 @@ async function scanStagedFiles(): Promise<void> {
 }
 
 async function scanWorkspace(): Promise<void> {
+  if (!(await ensureSemgrepForScan())) return;
+
   const cwd = getWorkspaceCwd();
   if (!cwd) return;
 
@@ -155,7 +163,7 @@ async function scanWorkspace(): Promise<void> {
       const result = await runVardionix(["scan", "workspace"], cwd);
 
       if (!result.success) {
-        vscode.window.showErrorMessage(`Vardionix: Scan failed — ${result.error}`);
+        vscode.window.showErrorMessage(formatScanError(result.error, "workspace"));
         syncStatusBar();
         return;
       }
@@ -458,6 +466,38 @@ function getWorkspaceCwd(): string | undefined {
     return undefined;
   }
   return folders[0].uri.fsPath;
+}
+
+async function ensureSemgrepForScan(): Promise<boolean> {
+  if (!semgrepStorageUri) {
+    vscode.window.showErrorMessage("Vardionix: Extension storage is not ready yet. Please retry.");
+    return false;
+  }
+
+  await ensureSemgrep(semgrepStorageUri);
+
+  if (hasSemgrepAvailable()) {
+    return true;
+  }
+
+  vscode.window.showErrorMessage(
+    "Vardionix: Semgrep setup failed. The extension tried to install Semgrep automatically but it is still unavailable.",
+  );
+  return false;
+}
+
+function formatScanError(error: string | undefined, scope: "staged" | "workspace" | "file"): string {
+  const message = error?.trim() || "Unknown error";
+
+  if (message.includes("not a git repository")) {
+    return "Vardionix: Scan Staged Files requires a Git repository.";
+  }
+
+  if (message.includes("Semgrep is not installed or not found in PATH")) {
+    return "Vardionix: Semgrep is still unavailable after automatic setup. Please retry in a moment or set vardionix.semgrepPath manually.";
+  }
+
+  return `Vardionix: Scan failed — ${message}`;
 }
 
 function syncStatusBar(): void {

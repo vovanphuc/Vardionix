@@ -227,12 +227,32 @@ export function waitForSemgrep(): Promise<void> {
   return semgrepReadyPromise ?? Promise.resolve();
 }
 
+export function hasSemgrepAvailable(): boolean {
+  if (resolvedSemgrepPath === "semgrep") {
+    return checkSystemSemgrep("semgrep");
+  }
+
+  return existsSync(resolvedSemgrepPath) && checkSystemSemgrep(resolvedSemgrepPath);
+}
+
 /**
  * Ensure Semgrep binary is available. Downloads if necessary.
  * Call this from extension activate().
  */
 export function ensureSemgrep(globalStorageUri: vscode.Uri): Promise<void> {
-  semgrepReadyPromise = doEnsureSemgrep(globalStorageUri);
+  if (hasSemgrepAvailable()) {
+    return Promise.resolve();
+  }
+
+  if (semgrepReadyPromise) {
+    return semgrepReadyPromise;
+  }
+
+  semgrepReadyPromise = doEnsureSemgrep(globalStorageUri).finally(() => {
+    if (!hasSemgrepAvailable()) {
+      semgrepReadyPromise = null;
+    }
+  });
   return semgrepReadyPromise;
 }
 
@@ -242,8 +262,14 @@ async function doEnsureSemgrep(globalStorageUri: vscode.Uri): Promise<void> {
 
   // 1. If user explicitly configured a custom path, trust it
   if (configuredPath !== "semgrep") {
-    resolvedSemgrepPath = configuredPath;
-    return;
+    if (checkSystemSemgrep(configuredPath)) {
+      resolvedSemgrepPath = configuredPath;
+      return;
+    }
+
+    vscode.window.showWarningMessage(
+      `Vardionix: Configured Semgrep path "${configuredPath}" is not executable. Falling back to automatic setup.`,
+    );
   }
 
   // 2. Check if system semgrep is available
@@ -267,8 +293,10 @@ async function doEnsureSemgrep(globalStorageUri: vscode.Uri): Promise<void> {
   const binaryPath = join(semgrepDir, platformInfo.binaryName);
 
   if (existsSync(binaryPath)) {
-    resolvedSemgrepPath = binaryPath;
-    return;
+    if (checkSystemSemgrep(binaryPath)) {
+      resolvedSemgrepPath = binaryPath;
+      return;
+    }
   }
 
   // 4. Download from PyPI
