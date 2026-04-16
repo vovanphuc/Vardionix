@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4 (2026-04-16)
+
+- Replace local SQLite storage from `better-sqlite3` to `sql.js` to keep Marketplace packaging cross-platform
+
 ## 0.1.0 (2026-04-15)
 
 - Initial release

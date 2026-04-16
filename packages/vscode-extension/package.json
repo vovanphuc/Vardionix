@@ -185,7 +185,13 @@
           "default": [],
           "items": {
             "type": "string",
-            "enum": ["critical", "high", "medium", "low", "info"]
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low",
+              "info"
+            ]
           },
           "description": "Only show findings at these severity levels. Leave empty to show all."
         }
@@ -199,7 +205,7 @@
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.0",
     "esbuild": "^0.25.4"
-  },
-  "dependencies": {}
+  }
 }

@@ -9,7 +9,7 @@ const serverState = vi.hoisted(() => ({
 }));
 
 vi.mock("@vardionix/core", () => ({
-  createAppContext: () => serverState.context,
+  createAppContext: async () => serverState.context,
 }));
 
 vi.mock("@modelcontextprotocol/sdk/server/mcp.js", () => ({
@@ -30,15 +30,15 @@ vi.mock("@modelcontextprotocol/sdk/server/mcp.js", () => ({
   },
 }));
 
-import { createServer } from "../src/server.js";
+import { createDefaultServer } from "../src/server.js";
 
 describe("MCP server integration", () => {
   beforeEach(() => {
     serverState.createdServers.length = 0;
   });
 
-  it("registers the supported tool surface on startup", () => {
-    createServer();
+  it("registers the supported tool surface on startup", async () => {
+    await createDefaultServer();
 
     expect(serverState.createdServers).toHaveLength(1);
     expect(serverState.createdServers[0]).toMatchObject({

@@ -6,10 +6,10 @@ const cliTestState = vi.hoisted(() => ({
 }));
 
 vi.mock("@vardionix/core", () => ({
-  createAppContext: () => cliTestState.context,
+  createAppContext: async () => cliTestState.context,
 }));
 
-import { createProgram } from "../src/program.js";
+import { createDefaultProgram } from "../src/program.js";
 
 function makeActiveFinding(overrides: Partial<ActiveFinding> = {}): ActiveFinding {
   return {
@@ -193,7 +193,7 @@ async function runCli(args: string[]) {
   process.exitCode = undefined;
 
   try {
-    const program = createProgram();
+    const program = await createDefaultProgram();
     await program.parseAsync(args, { from: "user" });
 
     return {

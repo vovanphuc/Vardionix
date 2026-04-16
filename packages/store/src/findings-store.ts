@@ -1,5 +1,5 @@
-import type Database from "better-sqlite3";
 import type { ActiveFinding, FindingStatus, Severity } from "@vardionix/schemas";
+import type { DatabaseLike } from "./sqlite.js";
 
 export interface FindingFilters {
   status?: FindingStatus;
@@ -49,7 +49,7 @@ function rowToFinding(row: Record<string, unknown>): ActiveFinding {
 }
 
 export class FindingsStore {
-  constructor(private db: Database.Database) {}
+  constructor(private db: DatabaseLike) {}
 
   upsertFinding(finding: ActiveFinding): void {
     const stmt = this.db.prepare(`

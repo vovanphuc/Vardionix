@@ -1,8 +1,12 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createServer } from "./server.js";
+import { createDefaultServer } from "./server.js";
 
 async function main(): Promise<void> {
-  const server = createServer();
+  // Keep the stdio transport process alive to receive MCP messages over piped stdin.
+  process.stdin.resume();
+  const keepAlive = setInterval(() => {}, 1 << 30);
+  process.stdin.once("close", () => clearInterval(keepAlive));
+  const server = await createDefaultServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

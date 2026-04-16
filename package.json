@@ -9,13 +9,15 @@
     "build": "npm run typecheck && npm run build:workspaces",
     "build:workspaces": "npm run build --workspaces",
     "test": "vitest run",
+    "test:vscode-host": "node scripts/run-vscode-extension-host-tests.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc --build --force",
     "clean": "rm -rf packages/*/dist"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.3",
+    "@types/sql.js": "^1.4.11",
+    "@vscode/test-electron": "^2.5.2",
     "tsup": "^8.4.0",
     "typescript": "^5.7.3",
     "vitest": "^3.1.1"

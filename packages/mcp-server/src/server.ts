@@ -10,7 +10,7 @@ import { registerFindingExplain } from "./tools/finding-explain.js";
 import { registerPolicyLookup } from "./tools/policy-lookup.js";
 
 export function createServer(
-  context: VardionixAppContext = createAppContext(),
+  context: VardionixAppContext,
 ): McpServer {
 
   const server = new McpServer({
@@ -25,4 +25,9 @@ export function createServer(
   registerPolicyLookup(server, context.scanService);
 
   return server;
+}
+
+export async function createDefaultServer(): Promise<McpServer> {
+  const context = await createAppContext();
+  return createServer(context);
 }

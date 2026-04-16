@@ -1,5 +1,5 @@
-import type Database from "better-sqlite3";
 import type { ExcludedFinding, Severity } from "@vardionix/schemas";
+import type { DatabaseLike } from "./sqlite.js";
 
 export interface ExcludedFindingFilters {
   severity?: Severity;
@@ -41,7 +41,7 @@ function rowToExcludedFinding(row: Record<string, unknown>): ExcludedFinding {
 }
 
 export class ExcludedFindingsStore {
-  constructor(private db: Database.Database) {}
+  constructor(private db: DatabaseLike) {}
 
   upsertFinding(finding: ExcludedFinding): void {
     const stmt = this.db.prepare(`

@@ -12,7 +12,7 @@ import { createPolicyCommand } from "./commands/policy.js";
 import { createAgentCommand } from "./commands/agent.js";
 
 export function createProgram(
-  context: VardionixAppContext = createAppContext(),
+  context: VardionixAppContext,
 ): Command {
 
   const program = new Command();
@@ -43,4 +43,9 @@ export function createProgram(
   );
 
   return program;
+}
+
+export async function createDefaultProgram(): Promise<Command> {
+  const context = await createAppContext();
+  return createProgram(context);
 }

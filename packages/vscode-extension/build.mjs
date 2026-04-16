@@ -1,9 +1,12 @@
 import * as esbuild from "esbuild";
-import { copyFileSync, mkdirSync, existsSync, readdirSync, statSync } from "fs";
+import { copyFileSync, mkdirSync, existsSync, readdirSync, rmSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const distDir = join(__dirname, "dist");
+
+rmSync(distDir, { recursive: true, force: true });
 
 // Build the extension
 await esbuild.build({
@@ -21,7 +24,6 @@ await esbuild.build({
 console.log("Build complete: dist/extension.js");
 
 // Build a self-contained CLI bundle (re-bundle from CLI source with all deps inlined)
-// better-sqlite3 is native so it must remain external and be copied
 const cliEntry = join(__dirname, "..", "cli", "src", "index.ts");
 
 if (existsSync(cliEntry)) {
@@ -29,7 +31,6 @@ if (existsSync(cliEntry)) {
     entryPoints: [cliEntry],
     bundle: true,
     outfile: "dist/cli.js",
-    external: ["better-sqlite3"],
     format: "cjs",
     platform: "node",
     target: "node20",
@@ -58,54 +59,6 @@ const rulesDest = join(__dirname, "dist", "rules");
 if (existsSync(rulesSrc)) {
   copyDirSync(rulesSrc, rulesDest);
   console.log("Copied rules: dist/rules/");
-}
-
-// Copy better-sqlite3 native module into dist/ (not node_modules/ since vsce excludes it)
-const betterSqliteDir = join(monorepoRoot, "node_modules", "better-sqlite3");
-if (existsSync(betterSqliteDir)) {
-  const targetDir = join(__dirname, "dist", "node_modules", "better-sqlite3");
-  mkdirSync(targetDir, { recursive: true });
-
-  // Copy package.json
-  const pkgSrc = join(betterSqliteDir, "package.json");
-  if (existsSync(pkgSrc)) {
-    copyFileSync(pkgSrc, join(targetDir, "package.json"));
-  }
-
-  // Copy the prebuilt binding directory
-  copyDirSync(join(betterSqliteDir, "build"), join(targetDir, "build"));
-  // Copy lib directory
-  copyDirSync(join(betterSqliteDir, "lib"), join(targetDir, "lib"));
-
-  console.log("Copied better-sqlite3 native module to dist/node_modules/");
-}
-
-// Copy 'bindings' package (required by better-sqlite3 to locate the .node addon)
-const bindingsDir = join(monorepoRoot, "node_modules", "bindings");
-if (existsSync(bindingsDir)) {
-  const targetDir = join(__dirname, "dist", "node_modules", "bindings");
-  mkdirSync(targetDir, { recursive: true });
-  for (const entry of readdirSync(bindingsDir)) {
-    const srcPath = join(bindingsDir, entry);
-    if (!statSync(srcPath).isDirectory()) {
-      copyFileSync(srcPath, join(targetDir, entry));
-    }
-  }
-  console.log("Copied bindings to dist/node_modules/");
-}
-
-// Copy 'file-uri-to-path' package (dependency of bindings)
-const fileUriDir = join(monorepoRoot, "node_modules", "file-uri-to-path");
-if (existsSync(fileUriDir)) {
-  const targetDir = join(__dirname, "dist", "node_modules", "file-uri-to-path");
-  mkdirSync(targetDir, { recursive: true });
-  for (const entry of readdirSync(fileUriDir)) {
-    const srcPath = join(fileUriDir, entry);
-    if (!statSync(srcPath).isDirectory()) {
-      copyFileSync(srcPath, join(targetDir, entry));
-    }
-  }
-  console.log("Copied file-uri-to-path to dist/node_modules/");
 }
 
 function copyDirSync(src, dest) {

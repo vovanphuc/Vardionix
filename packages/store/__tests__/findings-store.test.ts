@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import type Database from "better-sqlite3";
 import {
   createInMemoryDatabase,
+  type DatabaseLike,
   ExcludedFindingsStore,
   FindingsStore,
 } from "../src/index.js";
@@ -68,12 +68,12 @@ function makeExcludedFinding(overrides: Partial<ExcludedFinding> = {}): Excluded
 }
 
 describe("FindingsStore", () => {
-  let db: Database.Database;
+  let db: DatabaseLike;
   let store: FindingsStore;
   let excludedStore: ExcludedFindingsStore;
 
-  beforeEach(() => {
-    db = createInMemoryDatabase();
+  beforeEach(async () => {
+    db = await createInMemoryDatabase();
     store = new FindingsStore(db);
     excludedStore = new ExcludedFindingsStore(db);
   });

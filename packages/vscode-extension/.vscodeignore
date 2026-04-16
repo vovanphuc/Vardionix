@@ -4,4 +4,9 @@ build.mjs
 .gitignore
 **/*.ts
 !dist/**
-!node_modules/better-sqlite3/**
+.env
+.env.*
+**/*.pem
+**/*.key
+**/credentials*
+**/secret*

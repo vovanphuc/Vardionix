@@ -87,8 +87,8 @@ export async function runVardionix(
             data: null,
             error:
               stderr ||
-              error.message ||
-              "Vardionix CLI not found. Run 'npm install' in the vardionix monorepo first.",
+              (error instanceof Error ? error.message : String(error)) ||
+              "Vardionix CLI failed to start.",
           });
           return;
         }

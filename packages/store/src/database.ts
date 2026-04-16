@@ -1,7 +1,9 @@
-import Database from "better-sqlite3";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import initSqlJsModule from "sql.js/dist/sql-asm.js";
+import type { Database as SqlJsDatabase } from "sql.js";
+import { SqlJsDatabaseAdapter, type DatabaseLike } from "./sqlite.js";
 
 // Inline migration SQL to avoid file-path issues when bundled
 const MIGRATION_001 = `
@@ -105,7 +107,15 @@ WHERE COALESCE(excluded, 0) = 1;
 DELETE FROM findings WHERE COALESCE(excluded, 0) = 1;
 `;
 
-let db: Database.Database | null = null;
+let dbState:
+  | {
+      path: string;
+      promise: Promise<DatabaseLike>;
+    }
+  | null = null;
+let sqlJsPromise: Promise<{
+  Database: new (data?: ArrayLike<number> | null) => SqlJsDatabase;
+}> | null = null;
 
 export function getDefaultDbPath(): string {
   const dir = join(homedir(), ".vardionix");
@@ -115,26 +125,32 @@ export function getDefaultDbPath(): string {
   return join(dir, "findings.db");
 }
 
-export function getDatabase(dbPath?: string): Database.Database {
-  if (db) return db;
-
+export async function getDatabase(dbPath?: string): Promise<DatabaseLike> {
   const path = dbPath ?? getDefaultDbPath();
-  db = new Database(path);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
+  if (dbState?.path === path) {
+    return dbState.promise;
+  }
 
-  runMigrations(db);
-  return db;
+  if (dbState) {
+    void dbState.promise.then((db) => db.close());
+  }
+
+  dbState = {
+    path,
+    promise: createDatabase(path),
+  };
+  return dbState.promise;
 }
 
-export function createInMemoryDatabase(): Database.Database {
-  const memDb = new Database(":memory:");
-  memDb.pragma("foreign_keys = ON");
-  runMigrations(memDb);
-  return memDb;
+export async function createInMemoryDatabase(): Promise<DatabaseLike> {
+  const SQL = await getSqlJs();
+  const memDb = new SQL.Database();
+  const database = new SqlJsDatabaseAdapter(memDb);
+  runMigrations(database);
+  return database;
 }
 
-function runMigrations(database: Database.Database): void {
+function runMigrations(database: DatabaseLike): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version INTEGER PRIMARY KEY,
@@ -165,8 +181,31 @@ function runMigrations(database: Database.Database): void {
 }
 
 export function closeDatabase(): void {
-  if (db) {
-    db.close();
-    db = null;
+  if (dbState) {
+    void dbState.promise.then((db) => db.close());
+    dbState = null;
   }
+}
+
+async function createDatabase(dbPath: string): Promise<DatabaseLike> {
+  const SQL = await getSqlJs();
+  const data = existsSync(dbPath) ? readFileSync(dbPath) : undefined;
+  const sqlJsDb = new SQL.Database(data);
+  const database = new SqlJsDatabaseAdapter(sqlJsDb, () => {
+    writeFileSync(dbPath, Buffer.from(sqlJsDb.export()));
+  });
+
+  runMigrations(database);
+  return database;
+}
+
+async function getSqlJs(): Promise<{
+  Database: new (data?: ArrayLike<number> | null) => SqlJsDatabase;
+}> {
+  if (!sqlJsPromise) {
+    sqlJsPromise = Promise.resolve(initSqlJsModule()).then((sqlJs) => ({
+      Database: sqlJs.Database,
+    }));
+  }
+  return sqlJsPromise;
 }

@@ -86,8 +86,8 @@ function makeExcludedFinding(overrides: Partial<ExcludedFinding> = {}): Excluded
   };
 }
 
-function createRealContext(): VardionixAppContext {
-  const db = createInMemoryDatabase();
+async function createRealContext(): Promise<VardionixAppContext> {
+  const db = await createInMemoryDatabase();
   const findingsStore = new FindingsStore(db);
   const excludedFindingsStore = new ExcludedFindingsStore(db);
   const policyStore = new PolicyLocalStore([POLICIES_DIR]);
@@ -168,8 +168,8 @@ async function runCli(args: string[], context: VardionixAppContext) {
 describe("CLI integration with real services", () => {
   let context: VardionixAppContext;
 
-  beforeEach(() => {
-    context = createRealContext();
+  beforeEach(async () => {
+    context = await createRealContext();
   });
 
   it("shows built-in policy data through the real policy store", async () => {

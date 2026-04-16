@@ -20,10 +20,10 @@ export interface VardionixAppContext {
   patchService: PatchService;
 }
 
-export function createAppContext(
+export async function createAppContext(
   config: VardionixConfig = loadConfig(),
-): VardionixAppContext {
-  const db = getDatabase();
+): Promise<VardionixAppContext> {
+  const db = await getDatabase();
   const findingsStore = new FindingsStore(db);
   const excludedFindingsStore = new ExcludedFindingsStore(db);
   const policyStore = new PolicyLocalStore(resolvePolicyDirectories(config));
