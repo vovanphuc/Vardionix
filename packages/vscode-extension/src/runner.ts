@@ -65,10 +65,13 @@ export async function runVardionix(
   return new Promise((resolve) => {
     const cli = findCli();
     const semgrepPath = getSemgrepPath();
+    const commandArgs = shouldRequestJsonOutput(args)
+      ? [...cli.args, ...args, "--json"]
+      : [...cli.args, ...args];
 
     execFile(
       cli.command,
-      [...cli.args, ...args, "--json"],
+      commandArgs,
       {
         cwd,
         timeout: 120_000,
@@ -106,4 +109,22 @@ export async function runVardionix(
       },
     );
   });
+}
+
+function shouldRequestJsonOutput(args: string[]): boolean {
+  const [command, subcommand] = args;
+
+  if (command === "scan") {
+    return true;
+  }
+
+  if (command === "findings" || command === "finding") {
+    return subcommand === "list" || subcommand === "show";
+  }
+
+  if (command === "explain" || command === "patch" || command === "policy" || command === "agent") {
+    return true;
+  }
+
+  return false;
 }

@@ -84,4 +84,35 @@ describe("runVardionix integration", () => {
       data: "plain text response",
     });
   });
+
+  it("does not append --json for dismiss commands", async () => {
+    runnerState.exists.add("/repo/packages/vscode-extension/dist/cli.js");
+    runnerState.exists.add("/repo/packages/vscode-extension/dist/dist/cli.js");
+    runnerState.execFile.mockImplementation((_command, _args, _opts, callback) => {
+      callback(null, "Finding F-123 dismissed.\n", "");
+    });
+
+    const result = await runVardionix(
+      ["finding", "dismiss", "F-123", "--reason", "Accepted risk"],
+      "/repo",
+    );
+
+    expect(runnerState.execFile).toHaveBeenCalledWith(
+      "node",
+      [
+        "/repo/packages/vscode-extension/dist/dist/cli.js",
+        "finding",
+        "dismiss",
+        "F-123",
+        "--reason",
+        "Accepted risk",
+      ],
+      expect.objectContaining({ cwd: "/repo" }),
+      expect.any(Function),
+    );
+    expect(result).toEqual({
+      success: true,
+      data: "Finding F-123 dismissed.",
+    });
+  });
 });
