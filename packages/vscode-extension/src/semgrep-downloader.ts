@@ -11,7 +11,7 @@ const SEMGREP_VERSION = "1.67.0";
 interface PlatformInfo {
   wheelPlatform: string;
   binaryName: string;
-  binaryPathInWheel: string;
+  binaryCandidates: string[];
 }
 
 function getPlatformInfo(): PlatformInfo | null {
@@ -22,35 +22,35 @@ function getPlatformInfo(): PlatformInfo | null {
     return {
       wheelPlatform: "manylinux",
       binaryName: "osemgrep",
-      binaryPathInWheel: "semgrep/bin/osemgrep",
+      binaryCandidates: ["osemgrep", "semgrep"],
     };
   }
   if (platform === "linux" && arch === "arm64") {
     return {
       wheelPlatform: "manylinux",
       binaryName: "osemgrep",
-      binaryPathInWheel: "semgrep/bin/osemgrep",
+      binaryCandidates: ["osemgrep", "semgrep"],
     };
   }
   if (platform === "darwin" && arch === "x64") {
     return {
       wheelPlatform: "macosx",
       binaryName: "osemgrep",
-      binaryPathInWheel: "semgrep/bin/osemgrep",
+      binaryCandidates: ["osemgrep", "semgrep"],
     };
   }
   if (platform === "darwin" && arch === "arm64") {
     return {
       wheelPlatform: "macosx",
       binaryName: "osemgrep",
-      binaryPathInWheel: "semgrep/bin/osemgrep",
+      binaryCandidates: ["osemgrep", "semgrep"],
     };
   }
   if (platform === "win32" && arch === "x64") {
     return {
       wheelPlatform: "win",
       binaryName: "osemgrep.exe",
-      binaryPathInWheel: "semgrep/bin/osemgrep.exe",
+      binaryCandidates: ["osemgrep.exe", "semgrep.exe"],
     };
   }
 
@@ -175,6 +175,78 @@ function extractFromWheel(whlPath: string, entryPath: string, destDir: string): 
       });
     }
   });
+}
+
+function listWheelEntries(whlPath: string): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    if (process.platform === "win32") {
+      const script = `
+        Add-Type -AssemblyName System.IO.Compression.FileSystem;
+        $zip = [System.IO.Compression.ZipFile]::OpenRead('${whlPath.replace(/'/g, "''")}');
+        try {
+          $zip.Entries | ForEach-Object { $_.FullName };
+        } finally {
+          $zip.Dispose();
+        }
+      `;
+
+      execFile("powershell", ["-NoProfile", "-Command", script], (err, stdout, stderr) => {
+        if (err) {
+          reject(new Error(stderr || err.message));
+          return;
+        }
+        resolve(
+          stdout
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0),
+        );
+      });
+      return;
+    }
+
+    execFile("unzip", ["-Z1", whlPath], (err, stdout, stderr) => {
+      if (err) {
+        reject(new Error(stderr || err.message));
+        return;
+      }
+      resolve(
+        stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0),
+      );
+    });
+  });
+}
+
+async function findBinaryEntryInWheel(
+  whlPath: string,
+  platformInfo: PlatformInfo,
+): Promise<string> {
+  const entries = await listWheelEntries(whlPath);
+  const candidates = entries
+    .filter((entry) => !entry.endsWith("/"))
+    .filter((entry) => {
+      const basename = entry.split("/").pop();
+      return basename ? platformInfo.binaryCandidates.includes(basename) : false;
+    })
+    .sort((left, right) => scoreWheelEntry(left) - scoreWheelEntry(right));
+
+  if (candidates.length === 0) {
+    throw new Error(
+      `No Semgrep executable found in downloaded wheel. Expected one of: ${platformInfo.binaryCandidates.join(", ")}`,
+    );
+  }
+
+  return candidates[0];
+}
+
+function scoreWheelEntry(entry: string): number {
+  if (entry.includes("/semgrep/bin/")) return 0;
+  if (entry.includes("/bin/")) return 1;
+  if (entry.includes(".data/scripts/")) return 2;
+  return 3;
 }
 
 /**
@@ -324,9 +396,10 @@ async function doEnsureSemgrep(globalStorageUri: vscode.Uri): Promise<void> {
         });
 
         progress.report({ message: "Extracting binary...", increment: 70 });
+        const wheelEntryPath = await findBinaryEntryInWheel(whlFile, platformInfo);
         const extractedPath = await extractFromWheel(
           whlFile,
-          platformInfo.binaryPathInWheel,
+          wheelEntryPath,
           semgrepDir,
         );
 

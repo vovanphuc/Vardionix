@@ -8,6 +8,7 @@ import {
 import { ScanService } from "./scan-orchestrator.js";
 import { ExplainService } from "./explain-service.js";
 import { PatchService } from "./patch-service.js";
+import { TriageService } from "./triage-service.js";
 
 export interface VardionixAppContext {
   config: VardionixConfig;
@@ -18,6 +19,7 @@ export interface VardionixAppContext {
   scanService: ScanService;
   explainService: ExplainService;
   patchService: PatchService;
+  triageService: TriageService;
 }
 
 export async function createAppContext(
@@ -39,6 +41,7 @@ export async function createAppContext(
   );
   const explainService = new ExplainService(findingsStore, excludedFindingsStore);
   const patchService = new PatchService(findingsStore, excludedFindingsStore);
+  const triageService = new TriageService(findingsStore);
 
   return {
     config,
@@ -49,5 +52,6 @@ export async function createAppContext(
     scanService,
     explainService,
     patchService,
+    triageService,
   };
 }

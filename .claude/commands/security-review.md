@@ -7,6 +7,8 @@ Use the vardionix MCP tools or CLI to scan, analyze, and report findings.
 
 - Bash: `git diff`, `git status`, `git log`, `git show`, `git remote`
 - Bash: `vardionix scan`, `vardionix findings`, `vardionix explain`, `vardionix policy`
+- MCP: `semgrep_scan`, `scan_summary`, `findings_triage`, `finding_fix`, `findings_batch_dismiss`
+- MCP: `finding_explain`, `findings_enrich`, `policy_lookup`
 - Read, Glob, Grep tools for source code analysis
 
 ## Analysis Methodology (3-Phase)
@@ -17,18 +19,18 @@ Use the vardionix MCP tools or CLI to scan, analyze, and report findings.
 3. Identify the project's threat model from its structure.
 4. Check for established secure coding patterns already in the codebase.
 
-### Phase 2: Comparative Analysis
-1. Run `vardionix scan staged` (or `vardionix scan file <path>` for specific files).
-2. Compare new code against established security patterns found in Phase 1.
-3. Identify deviations from security baselines.
-4. Assess if changes contradict established security practices.
+### Phase 2: Scan & Triage
+1. Run `semgrep_scan` (or `vardionix scan staged` for staged changes).
+2. Use `scan_summary` to get overview of findings by category and severity.
+3. Use `findings_triage` to get batches of findings with code context.
+4. Classify each finding as True Positive, False Positive, or Needs Investigation.
+5. Dismiss false positives in batch using `findings_batch_dismiss`.
 
-### Phase 3: Vulnerability Assessment
-1. Review each finding from the scan using `vardionix explain <F-ID>`.
-2. Trace data flows through modified code paths.
-3. Identify injection points and attack surfaces.
-4. Evaluate exploitability with concrete attack scenarios.
-5. Cross-reference with policy using `vardionix policy show <POLICY-ID>`.
+### Phase 3: Fix & Verify
+1. For each true positive, use `finding_fix` to get extended code context and fix hints.
+2. Generate targeted fixes following remediation guidance.
+3. Cross-reference with policy using `policy_lookup`.
+4. Re-scan affected files to verify fixes resolved the findings.
 
 ## Confidence Threshold
 

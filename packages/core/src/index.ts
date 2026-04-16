@@ -18,3 +18,10 @@ export {
   PatchService,
   type PatchContext,
 } from "./patch-service.js";
+export {
+  TriageService,
+  type TriageFinding,
+  type TriageBatch,
+  type ScanSummaryResult,
+  type FindingFixContext,
+} from "./triage-service.js";

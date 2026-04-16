@@ -50,6 +50,10 @@ describe("MCP server integration", () => {
       "findings_enrich",
       "finding_explain",
       "policy_lookup",
+      "scan_summary",
+      "findings_triage",
+      "finding_fix",
+      "findings_batch_dismiss",
     ]);
   });
 });

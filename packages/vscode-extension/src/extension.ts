@@ -9,15 +9,23 @@ import {
 import { FindingsTreeProvider, FindingItem } from "./findings-tree";
 import { createStatusBar, updateStatusBar, setStatusBarScanning } from "./status-bar";
 import { ensureSemgrep, hasSemgrepAvailable } from "./semgrep-downloader";
+import {
+  getMcpTargetLabel,
+  installMcpServer,
+  type McpClientTarget,
+  verifyMcpServerRegistration,
+} from "./mcp-register";
 
 let diagnosticCollection: vscode.DiagnosticCollection;
 let findingsTreeProvider: FindingsTreeProvider;
 let semgrepStorageUri: vscode.Uri | undefined;
+let extensionContext: vscode.ExtensionContext | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   diagnosticCollection = createDiagnosticCollection();
   findingsTreeProvider = new FindingsTreeProvider();
   semgrepStorageUri = context.globalStorageUri;
+  extensionContext = context;
 
   // Ensure Semgrep is available (downloads if needed, runs in background)
   ensureSemgrep(context.globalStorageUri);
@@ -45,6 +53,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("vardionix.dismissFinding", dismissFinding),
     vscode.commands.registerCommand("vardionix.showPolicy", showPolicy),
     vscode.commands.registerCommand("vardionix.refreshFindings", refreshFindings),
+    vscode.commands.registerCommand("vardionix.installMcpIntegration", installMcpIntegration),
+    vscode.commands.registerCommand("vardionix.verifyMcpIntegration", verifyMcpIntegration),
   );
 
   // Auto-scan on save if configured
@@ -457,7 +467,94 @@ async function showPolicy(): Promise<void> {
   panel.webview.html = buildPolicyHtml(policy);
 }
 
+async function installMcpIntegration(): Promise<void> {
+  if (!extensionContext) {
+    vscode.window.showErrorMessage("Vardionix: Extension context is not ready yet. Please retry.");
+    return;
+  }
+  const context = extensionContext;
+
+  const targets = await pickMcpTargets("Install MCP integration for");
+  if (!targets) return;
+
+  const results: string[] = [];
+
+  for (const target of targets) {
+    try {
+      const result = installMcpServer(context, target);
+      const state = result.verified ? "installed and verified" : "written but not verified";
+      results.push(`${getMcpTargetLabel(target)}: ${state}`);
+    } catch (error) {
+      results.push(
+        `${getMcpTargetLabel(target)}: failed — ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  const allVerified = targets.every((target) => verifyMcpServerRegistration(context, target));
+  const message = `Vardionix: ${results.join(" | ")}`;
+
+  if (allVerified) {
+    vscode.window.showInformationMessage(message);
+    return;
+  }
+
+  vscode.window.showWarningMessage(message);
+}
+
+async function verifyMcpIntegration(): Promise<void> {
+  if (!extensionContext) {
+    vscode.window.showErrorMessage("Vardionix: Extension context is not ready yet. Please retry.");
+    return;
+  }
+  const context = extensionContext;
+
+  const targets = await pickMcpTargets("Verify MCP integration for");
+  if (!targets) return;
+
+  const verified = targets.filter((target) => verifyMcpServerRegistration(context, target));
+  const missing = targets.filter((target) => !verified.includes(target));
+
+  if (missing.length === 0) {
+    vscode.window.showInformationMessage(
+      `Vardionix: MCP verified for ${verified.map(getMcpTargetLabel).join(" and ")}.`,
+    );
+    return;
+  }
+
+  vscode.window.showWarningMessage(
+    `Vardionix: MCP missing for ${missing.map(getMcpTargetLabel).join(" and ")}. Use Install MCP to add it.`,
+  );
+}
+
 // === Helpers ===
+
+async function pickMcpTargets(placeHolder: string): Promise<McpClientTarget[] | undefined> {
+  const picked = await vscode.window.showQuickPick(
+    [
+      {
+        label: "$(hubot) Claude Code",
+        description: "Write ~/.claude/settings.json",
+        targets: ["claude"] as McpClientTarget[],
+      },
+      {
+        label: "$(terminal-cmd) Codex",
+        description: "Write ~/.codex/config.toml",
+        targets: ["codex"] as McpClientTarget[],
+      },
+      {
+        label: "$(plug) Claude Code + Codex",
+        description: "Install MCP config for both agents",
+        targets: ["claude", "codex"] as McpClientTarget[],
+      },
+    ],
+    {
+      placeHolder,
+    },
+  );
+
+  return picked?.targets;
+}
 
 function getWorkspaceCwd(): string | undefined {
   const folders = vscode.workspace.workspaceFolders;

@@ -2,7 +2,7 @@
   "name": "vardionix-vscode",
   "displayName": "Vardionix - DevSecOps",
   "description": "Unified DevSecOps tool for scanning, triaging, and remediating security findings with Semgrep, Claude, and Codex",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "publisher": "vardionix",
   "license": "MIT",
   "icon": "icon.png",
@@ -86,6 +86,18 @@
         "title": "Refresh Findings",
         "category": "Vardionix",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "vardionix.installMcpIntegration",
+        "title": "Install MCP",
+        "category": "Vardionix",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "vardionix.verifyMcpIntegration",
+        "title": "Verify MCP",
+        "category": "Vardionix",
+        "icon": "$(pass)"
       }
     ],
     "viewsContainers": {
@@ -109,7 +121,7 @@
     "viewsWelcome": [
       {
         "view": "vardionixFindings",
-        "contents": "No security findings yet.\n\nRun a scan to get started.\n[Scan Current File](command:vardionix.scanCurrentFile)\n[Scan Workspace](command:vardionix.scanWorkspace)\n[Scan Staged Files](command:vardionix.scanStagedFiles)"
+        "contents": "No security findings yet.\n\nRun a scan to get started.\n[Scan Current File](command:vardionix.scanCurrentFile)\n[Scan Workspace](command:vardionix.scanWorkspace)\n[Scan Staged Files](command:vardionix.scanStagedFiles)\n\nAI agent setup:\n[Install MCP for Claude/Codex](command:vardionix.installMcpIntegration)\n[Verify MCP Setup](command:vardionix.verifyMcpIntegration)"
       }
     ],
     "menus": {
@@ -137,6 +149,11 @@
           "group": "navigation@3"
         },
         {
+          "command": "vardionix.installMcpIntegration",
+          "when": "view == vardionixFindings",
+          "group": "navigation@4"
+        },
+        {
           "command": "vardionix.listExcludedFindings",
           "when": "view == vardionixFindings",
           "group": "overflow@1"
@@ -145,6 +162,11 @@
           "command": "vardionix.showPolicy",
           "when": "view == vardionixFindings",
           "group": "overflow@2"
+        },
+        {
+          "command": "vardionix.verifyMcpIntegration",
+          "when": "view == vardionixFindings",
+          "group": "overflow@3"
         }
       ],
       "view/item/context": [

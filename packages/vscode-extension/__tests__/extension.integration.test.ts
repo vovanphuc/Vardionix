@@ -16,6 +16,8 @@ const vscodeState = vi.hoisted(() => ({
   }>,
   ensureSemgrep: vi.fn(() => Promise.resolve()),
   hasSemgrepAvailable: vi.fn(() => true),
+  installMcpServer: vi.fn(() => ({ updated: true, verified: true })),
+  verifyMcpServerRegistration: vi.fn(() => true),
 }));
 
 vi.mock("vscode", () => ({
@@ -97,6 +99,12 @@ vi.mock("../src/semgrep-downloader.ts", () => ({
   waitForSemgrep: () => Promise.resolve(),
 }));
 
+vi.mock("../src/mcp-register.ts", () => ({
+  getMcpTargetLabel: (target: string) => (target === "claude" ? "Claude Code" : "Codex"),
+  installMcpServer: (...args: any[]) => vscodeState.installMcpServer(...args),
+  verifyMcpServerRegistration: (...args: any[]) => vscodeState.verifyMcpServerRegistration(...args),
+}));
+
 vi.mock("../src/findings-tree.ts", () => ({
   FindingsTreeProvider: class FakeFindingsTreeProvider {
     findings: unknown[] = [];
@@ -141,6 +149,10 @@ describe("VS Code extension integration", () => {
     vscodeState.ensureSemgrep.mockClear();
     vscodeState.hasSemgrepAvailable.mockReset();
     vscodeState.hasSemgrepAvailable.mockReturnValue(true);
+    vscodeState.installMcpServer.mockReset();
+    vscodeState.installMcpServer.mockReturnValue({ updated: true, verified: true });
+    vscodeState.verifyMcpServerRegistration.mockReset();
+    vscodeState.verifyMcpServerRegistration.mockReturnValue(true);
   });
 
   it("loads active findings into the tree and diagnostics via the CLI bridge", async () => {
@@ -218,6 +230,44 @@ describe("VS Code extension integration", () => {
     expect(vscodeState.runVardionix).not.toHaveBeenCalled();
     expect(vscodeState.errorMessages).toContain(
       "Vardionix: Semgrep setup failed. The extension tried to install Semgrep automatically but it is still unavailable.",
+    );
+  });
+
+  it("installs MCP integration for the selected agent from the UI command", async () => {
+    vscodeState.quickPickSelectionIndex = 0;
+
+    activate({
+      subscriptions: [],
+      globalStorageUri: { fsPath: "/tmp/storage" },
+      extensionPath: "/repo/packages/vscode-extension",
+    } as any);
+    await vscodeState.commands.get("vardionix.installMcpIntegration")?.();
+
+    expect(vscodeState.installMcpServer).toHaveBeenCalledWith(
+      expect.objectContaining({ extensionPath: "/repo/packages/vscode-extension" }),
+      "claude",
+    );
+    expect(vscodeState.informationMessages).toContain(
+      "Vardionix: Claude Code: installed and verified",
+    );
+  });
+
+  it("verifies MCP integration for the selected agent from the UI command", async () => {
+    vscodeState.quickPickSelectionIndex = 1;
+
+    activate({
+      subscriptions: [],
+      globalStorageUri: { fsPath: "/tmp/storage" },
+      extensionPath: "/repo/packages/vscode-extension",
+    } as any);
+    await vscodeState.commands.get("vardionix.verifyMcpIntegration")?.();
+
+    expect(vscodeState.verifyMcpServerRegistration).toHaveBeenCalledWith(
+      expect.objectContaining({ extensionPath: "/repo/packages/vscode-extension" }),
+      "codex",
+    );
+    expect(vscodeState.informationMessages).toContain(
+      "Vardionix: MCP verified for Codex.",
     );
   });
 });

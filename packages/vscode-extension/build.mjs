@@ -44,6 +44,26 @@ if (existsSync(cliEntry)) {
   console.warn("Make sure you are building from the monorepo root.");
 }
 
+// Build a self-contained MCP server bundle
+const mcpEntry = join(__dirname, "..", "mcp-server", "src", "index.ts");
+
+if (existsSync(mcpEntry)) {
+  await esbuild.build({
+    entryPoints: [mcpEntry],
+    bundle: true,
+    outfile: "dist/mcp-server.js",
+    format: "cjs",
+    platform: "node",
+    target: "node20",
+    sourcemap: true,
+    minify: false,
+    banner: { js: "#!/usr/bin/env node" },
+  });
+  console.log("Bundled MCP server: dist/mcp-server.js");
+} else {
+  console.warn("WARNING: MCP server source not found at", mcpEntry);
+}
+
 // Copy policies and rules alongside CLI for self-contained operation
 const monorepoRoot = join(__dirname, "..", "..");
 

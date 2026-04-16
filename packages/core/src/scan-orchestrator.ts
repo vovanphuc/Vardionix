@@ -57,7 +57,10 @@ class TargetResolver {
       }).trim();
 
       if (!output) return [];
-      return output.split("\n").filter((f) => f.length > 0);
+      return output
+        .split("\n")
+        .filter((f) => f.length > 0)
+        .map((filePath) => resolve(filePath));
     } catch {
       throw new Error(
         "Failed to get staged files. Make sure you are in a git repository with staged changes.",
@@ -250,6 +253,12 @@ export class ScanService {
     this.excludedFindingsStore.upsertFindings(filterResult.excluded);
     this.findingsStore.deleteFindings(filterResult.excluded.map((f) => f.id));
     this.excludedFindingsStore.deleteFindings(filterResult.kept.map((f) => f.id));
+    this.reconcileScopedFindings(
+      request.scope,
+      targets,
+      filterResult.kept.map((f) => f.id),
+      filterResult.excluded.map((f) => f.id),
+    );
 
     const findingsBySeverity = this.computeSeverityStats(filterResult.kept);
 
@@ -321,6 +330,57 @@ export class ScanService {
     }
 
     return Array.from(byLocation.values());
+  }
+
+  private reconcileScopedFindings(
+    scope: ScanScope,
+    targets: string[],
+    activeIds: string[],
+    excludedIds: string[],
+  ): void {
+    const selectors = this.createScopeSelectors(scope, targets);
+    if (selectors.length === 0) {
+      return;
+    }
+
+    const activeIdsSeen = new Set(activeIds);
+    const excludedIdsSeen = new Set(excludedIds);
+    const staleActiveIds = new Set<string>();
+    const staleExcludedIds = new Set<string>();
+
+    for (const selector of selectors) {
+      for (const finding of this.findingsStore.listFindings(selector)) {
+        if (!activeIdsSeen.has(finding.id)) {
+          staleActiveIds.add(finding.id);
+        }
+      }
+
+      for (const finding of this.excludedFindingsStore.listFindings(selector)) {
+        if (!excludedIdsSeen.has(finding.id)) {
+          staleExcludedIds.add(finding.id);
+        }
+      }
+    }
+
+    this.findingsStore.deleteFindings([...staleActiveIds]);
+    this.excludedFindingsStore.deleteFindings([...staleExcludedIds]);
+  }
+
+  private createScopeSelectors(
+    scope: ScanScope,
+    targets: string[],
+  ): Array<{ filePath?: string; filePathPrefix?: string }> {
+    switch (scope) {
+      case ScanScope.FILE:
+        return targets[0] ? [{ filePath: targets[0] }] : [];
+      case ScanScope.DIR:
+      case ScanScope.WORKSPACE:
+        return targets[0] ? [{ filePathPrefix: targets[0] }] : [];
+      case ScanScope.STAGED:
+        return targets.map((target) => ({ filePath: target }));
+      default:
+        return [];
+    }
   }
 
   private computeSeverityStats(
