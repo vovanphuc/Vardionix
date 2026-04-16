@@ -32,6 +32,7 @@ let semgrepStorageUri: vscode.Uri | undefined;
 let extensionContext: vscode.ExtensionContext | undefined;
 let outputChannel: vscode.OutputChannel | undefined;
 let activeFindings: Finding[] = [];
+type FixAgentTarget = "claude" | "codex";
 const pendingVerificationFindingIds = new Set<string>();
 const pendingRestoreTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingIdleRescanTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -83,6 +84,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("vardionix.listFindings", listFindings),
     vscode.commands.registerCommand("vardionix.listExcludedFindings", listExcludedFindings),
     vscode.commands.registerCommand("vardionix.explainFinding", explainFinding),
+    vscode.commands.registerCommand("vardionix.fixFindingWithClaude", fixFindingWithClaude),
+    vscode.commands.registerCommand("vardionix.fixFindingWithCodex", fixFindingWithCodex),
     vscode.commands.registerCommand("vardionix.dismissFinding", dismissFinding),
     vscode.commands.registerCommand("vardionix.showPolicy", showPolicy),
     vscode.commands.registerCommand("vardionix.refreshFindings", refreshFindings),
@@ -459,6 +462,14 @@ async function explainFinding(item?: FindingItem | { finding?: Finding }): Promi
   panel.webview.html = buildExplanationHtml(explanation);
 }
 
+async function fixFindingWithClaude(item?: FindingItem | { finding?: Finding }): Promise<void> {
+  await prepareFindingFix("claude", item);
+}
+
+async function fixFindingWithCodex(item?: FindingItem | { finding?: Finding }): Promise<void> {
+  await prepareFindingFix("codex", item);
+}
+
 async function dismissFinding(item?: FindingItem | { finding?: Finding }): Promise<void> {
   const cwd = getWorkspaceCwd();
   if (!cwd) return;
@@ -598,6 +609,88 @@ async function showPolicy(input?: { policyId?: string | null } | FindingItem | {
   panel.webview.html = buildPolicyHtml(policy);
 }
 
+async function prepareFindingFix(
+  agent: FixAgentTarget,
+  item?: FindingItem | { finding?: Finding },
+): Promise<void> {
+  const cwd = getWorkspaceCwd();
+  if (!cwd) return;
+
+  let finding = resolveFinding(item);
+  let findingId = finding?.id ?? resolveFindingId(item);
+
+  if (!findingId) {
+    const findings = findingsTreeProvider.getFindings().filter((candidate) => candidate.status === "open");
+    if (findings.length === 0) {
+      vscode.window.showInformationMessage("Vardionix: No open findings available. Run a scan first.");
+      return;
+    }
+
+    const picked = await vscode.window.showQuickPick(
+      findings.map((candidate) => ({
+        label: `$(tools) ${candidate.title}`,
+        description: severityLabel(candidate.policySeverityOverride ?? candidate.severity),
+        detail: `${candidate.filePath}:${candidate.startLine}`,
+        findingId: candidate.id,
+      })),
+      {
+        placeHolder: `Select a finding to prepare for ${getFixAgentLabel(agent)}`,
+        matchOnDetail: true,
+      },
+    );
+
+    if (!picked) return;
+    findingId = picked.findingId;
+    finding = findings.find((candidate) => candidate.id === findingId);
+  }
+
+  const result = await executeCli(["patch", findingId, "--agent", agent], cwd, {
+    label: `prepare ${agent} fix for ${findingId}`,
+    revealOnError: true,
+  });
+
+  if (!result.success) {
+    vscode.window.showErrorMessage(`Vardionix: Failed to prepare fix — ${result.error}`);
+    return;
+  }
+
+  const patchContext = result.data as {
+    findingId: string;
+    prompt: string;
+    contextFiles: string[];
+    finding?: Finding;
+  };
+  const resolvedFinding = patchContext.finding ?? finding;
+  const prompt = buildAgentFixPrompt(agent, patchContext, resolvedFinding);
+
+  await vscode.env.clipboard.writeText(prompt);
+  const document = await vscode.workspace.openTextDocument({
+    language: "markdown",
+    content: prompt,
+  });
+  await vscode.window.showTextDocument(document, {
+    preview: false,
+    viewColumn: vscode.ViewColumn.Beside,
+  });
+
+  const workspaceRoot = agent === "claude" ? cwd : undefined;
+  const mcpReady = extensionContext
+    ? verifyMcpServerRegistration(extensionContext, agent, workspaceRoot)
+    : false;
+  const findingLabel = resolvedFinding?.title ?? findingId;
+
+  if (mcpReady) {
+    vscode.window.showInformationMessage(
+      `Vardionix: Prepared ${getFixAgentLabel(agent)} prompt for "${findingLabel}" and copied it to the clipboard.`,
+    );
+    return;
+  }
+
+  vscode.window.showWarningMessage(
+    `Vardionix: Prepared ${getFixAgentLabel(agent)} prompt for "${findingLabel}" and copied it to the clipboard. Install MCP for ${getFixAgentLabel(agent)} if you want the agent to use Vardionix tools directly.`,
+  );
+}
+
 async function installMcpIntegration(): Promise<void> {
   if (!extensionContext) {
     vscode.window.showErrorMessage("Vardionix: Extension context is not ready yet. Please retry.");
@@ -608,11 +701,12 @@ async function installMcpIntegration(): Promise<void> {
   const targets = await pickMcpTargets("Install MCP integration for");
   if (!targets) return;
 
+  const workspaceRoot = targets.includes("claude") ? getWorkspaceCwd() : undefined;
   const results: string[] = [];
 
   for (const target of targets) {
     try {
-      const result = installMcpServer(context, target);
+      const result = installMcpServer(context, target, workspaceRoot);
       const state = result.verified ? "installed and verified" : "written but not verified";
       results.push(`${getMcpTargetLabel(target)}: ${state}`);
     } catch (error) {
@@ -622,7 +716,9 @@ async function installMcpIntegration(): Promise<void> {
     }
   }
 
-  const allVerified = targets.every((target) => verifyMcpServerRegistration(context, target));
+  const allVerified = targets.every((target) =>
+    verifyMcpServerRegistration(context, target, workspaceRoot),
+  );
   const message = `Vardionix: ${results.join(" | ")}`;
 
   if (allVerified) {
@@ -643,7 +739,10 @@ async function verifyMcpIntegration(): Promise<void> {
   const targets = await pickMcpTargets("Verify MCP integration for");
   if (!targets) return;
 
-  const verified = targets.filter((target) => verifyMcpServerRegistration(context, target));
+  const workspaceRoot = targets.includes("claude") ? getWorkspaceCwd() : undefined;
+  const verified = targets.filter((target) =>
+    verifyMcpServerRegistration(context, target, workspaceRoot),
+  );
   const missing = targets.filter((target) => !verified.includes(target));
 
   if (missing.length === 0) {
@@ -665,7 +764,7 @@ async function pickMcpTargets(placeHolder: string): Promise<McpClientTarget[] | 
     [
       {
         label: "$(hubot) Claude Code",
-        description: "Write ~/.claude/settings.json",
+        description: "Write ~/.claude.json (project-local scope)",
         targets: ["claude"] as McpClientTarget[],
       },
       {
@@ -1221,6 +1320,57 @@ function severityLabel(sev: string | null | undefined): string {
     info: "$(info) Info",
   };
   return icons[sev] ?? sev;
+}
+
+function getFixAgentLabel(agent: FixAgentTarget): string {
+  return agent === "claude" ? "Claude Code" : "Codex";
+}
+
+function buildAgentFixPrompt(
+  agent: FixAgentTarget,
+  patchContext: {
+    findingId: string;
+    prompt: string;
+    contextFiles: string[];
+  },
+  finding?: Finding,
+): string {
+  const fileLabel = finding?.filePath ?? patchContext.contextFiles[0] ?? "the affected file";
+  const severity = finding?.policySeverityOverride ?? finding?.severity ?? "unknown";
+  const header = agent === "claude"
+    ? [
+        `# Vardionix Fix Request for Claude Code`,
+        ``,
+        `Use the Vardionix MCP server in this workspace if it is available.`,
+        `Start with \`finding_fix\` for \`${patchContext.findingId}\`. Use \`finding_explain\` or \`policy_lookup\` only if you still need more context.`,
+        `Apply a minimal patch, then verify by re-running \`semgrep_scan\` for \`${fileLabel}\`.`,
+      ]
+    : [
+        `# Vardionix Fix Request for Codex`,
+        ``,
+        `Use the Vardionix MCP server in this workspace if it is available.`,
+        `Start with \`finding_fix\` for \`${patchContext.findingId}\`, make the smallest correct code change, and verify with \`semgrep_scan\` on \`${fileLabel}\`.`,
+        `Do not broaden scope beyond the flagged issue unless verification forces it.`,
+      ];
+
+  const metadata = [
+    ``,
+    `## Finding`,
+    `- ID: ${patchContext.findingId}`,
+    `- Title: ${finding?.title ?? "Security finding"}`,
+    `- Severity: ${severity}`,
+    `- File: ${fileLabel}`,
+    ``,
+    `## Existing Vardionix Context`,
+    patchContext.prompt,
+    ``,
+    `## Expected Result`,
+    `- Apply the fix directly in the workspace`,
+    `- Keep the patch minimal and behavior-preserving`,
+    `- Re-scan the affected file and report whether the finding is gone`,
+  ];
+
+  return [...header, ...metadata].join("\n");
 }
 
 function showScanSummary(

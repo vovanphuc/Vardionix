@@ -27,21 +27,78 @@ describe("MCP registration integration", () => {
 
   it("installs and verifies Claude Code MCP configuration", () => {
     const context = makeExtensionContext();
+    const workspaceRoot = join(mcpRegisterState.homeDir, "repo");
 
-    const result = installMcpServer(context, "claude");
-    const settingsPath = join(mcpRegisterState.homeDir, ".claude", "settings.json");
+    const result = installMcpServer(context, "claude", workspaceRoot);
+    const settingsPath = join(mcpRegisterState.homeDir, ".claude.json");
 
     expect(result.verified).toBe(true);
     expect(existsSync(settingsPath)).toBe(true);
     expect(JSON.parse(readFileSync(settingsPath, "utf-8"))).toMatchObject({
-      mcpServers: {
-        vardionix: {
-          command: "node",
-          args: [join(context.extensionPath, "dist", "mcp-server.js")],
+      projects: {
+        [workspaceRoot]: {
+          mcpServers: {
+            vardionix: {
+              command: "node",
+              args: [join(context.extensionPath, "dist", "mcp-server.js")],
+            },
+          },
         },
       },
     });
-    expect(verifyMcpServerRegistration(context, "claude")).toBe(true);
+    expect(verifyMcpServerRegistration(context, "claude", workspaceRoot)).toBe(true);
+  });
+
+  it("preserves other Claude Code projects and top-level settings", () => {
+    const context = makeExtensionContext();
+    const workspaceRoot = join(mcpRegisterState.homeDir, "repo");
+    const configPath = join(mcpRegisterState.homeDir, ".claude.json");
+
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          theme: "dark",
+          projects: {
+            "/another/project": {
+              mcpServers: {
+                other: {
+                  command: "node",
+                  args: ["/tmp/other.js"],
+                },
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    installMcpServer(context, "claude", workspaceRoot);
+
+    expect(JSON.parse(readFileSync(configPath, "utf-8"))).toMatchObject({
+      theme: "dark",
+      projects: {
+        "/another/project": {
+          mcpServers: {
+            other: {
+              command: "node",
+              args: ["/tmp/other.js"],
+            },
+          },
+        },
+        [workspaceRoot]: {
+          mcpServers: {
+            vardionix: {
+              command: "node",
+              args: [join(context.extensionPath, "dist", "mcp-server.js")],
+            },
+          },
+        },
+      },
+    });
   });
 
   it("installs and verifies Codex MCP configuration without removing other sections", () => {

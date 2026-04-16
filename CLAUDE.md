@@ -62,7 +62,7 @@ Findings that fail filtering go to `ExcludedFindingsStore` for audit visibility.
 The MCP server (`packages/mcp-server/src/server.ts`) registers tools via `@modelcontextprotocol/sdk`. Each tool is in its own file under `packages/mcp-server/src/tools/`. It delegates all logic to `@vardionix/core` services.
 
 **MCP Tools (8 total):**
-- `semgrep_scan` — Multi-layer scan (Semgrep + CodeQL + Trivy)
+- `semgrep_scan` — Semgrep-first scan with optional CodeQL and Trivy merge-in when available
 - `findings_enrich` — Enrich findings with policy context
 - `finding_explain` — Structured explanation of a finding
 - `policy_lookup` — Look up internal security policy

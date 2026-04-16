@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.9
+
+### AI Fix Handoff
+- Added `Fix with Claude Code` and `Fix with Codex` actions for individual findings in the sidebar and editor quick fixes
+- Added prompt handoff flow that prepares finding-specific fix context, opens it in VS Code, and copies it to the clipboard for the selected agent
+- Added MCP-aware status messaging so the extension warns when Claude Code or Codex MCP setup is missing during a fix handoff
+
+### MCP Alignment
+- Updated Claude Code MCP registration to use `~/.claude.json` project-local scope
+- Updated MCP documentation, prompts, and skills to match the current Claude Code and Codex configuration model and the actual 8-tool MCP surface
+
 ## 0.1.8
 
 ### Findings UX
@@ -24,7 +35,7 @@
   - `finding_fix` — extended code context with category-specific fix hints
   - `findings_batch_dismiss` — dismiss or reopen multiple findings at once
 - Bundled MCP server into extension (dist/mcp-server.js)
-- Auto-register MCP server with Claude Code and Codex on extension activation
+- Added extension commands to install and verify MCP configuration for Claude Code and Codex
 
 ### Semgrep Auto-Install Fix
 - Replaced binary extraction approach with proper package manager installation

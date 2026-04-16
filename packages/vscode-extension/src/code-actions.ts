@@ -47,6 +47,12 @@ export class VardionixCodeActionProvider implements vscode.CodeActionProvider {
       actions.push(createQuickFix("Explain finding", "vardionix.explainFinding", diagnostic, {
         finding: { id: data.findingId },
       }));
+      actions.push(createQuickFix("Fix with Claude Code", "vardionix.fixFindingWithClaude", diagnostic, {
+        finding: { id: data.findingId },
+      }));
+      actions.push(createQuickFix("Fix with Codex", "vardionix.fixFindingWithCodex", diagnostic, {
+        finding: { id: data.findingId },
+      }));
       actions.push(createQuickFix("Dismiss finding", "vardionix.dismissFinding", diagnostic, {
         finding: { id: data.findingId },
       }));

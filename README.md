@@ -94,25 +94,68 @@ vardionix agent codex batch-fix     # Batch fix workflow
 
 ### Claude Code
 
-Add to `.claude/settings.json`:
+Preferred: use the Claude Code CLI from the project root:
+
+```bash
+claude mcp add --transport stdio --scope local vardionix -- node /absolute/path/to/vardionix/packages/mcp-server/dist/index.js
+```
+
+Manual local-scope configuration in `~/.claude.json`:
+
+```json
+{
+  "projects": {
+    "/absolute/path/to/vardionix": {
+      "mcpServers": {
+        "vardionix": {
+          "command": "node",
+          "args": ["/absolute/path/to/vardionix/packages/mcp-server/dist/index.js"]
+        }
+      }
+    }
+  }
+}
+```
+
+Shared project configuration in `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "vardionix": {
       "command": "node",
-      "args": ["/path/to/vardionix/packages/mcp-server/dist/index.js"]
+      "args": ["/absolute/path/to/vardionix/packages/mcp-server/dist/index.js"]
     }
   }
 }
 ```
 
+### Codex
+
+Preferred: use the Codex CLI:
+
+```bash
+codex mcp add vardionix -- node /absolute/path/to/vardionix/packages/mcp-server/dist/index.js
+```
+
+Or add it manually to `~/.codex/config.toml` or project-local `.codex/config.toml`:
+
+```toml
+[mcp_servers.vardionix]
+command = "node"
+args = ["/absolute/path/to/vardionix/packages/mcp-server/dist/index.js"]
+```
+
 ### Available MCP Tools
 
-- `semgrep_scan` - Scan files/directories for security findings
+- `semgrep_scan` - Run a Semgrep-first scan and merge optional CodeQL/Trivy findings when available
 - `findings_enrich` - Enrich findings with policy context
 - `finding_explain` - Get structured finding explanation
 - `policy_lookup` - Look up security policy by ID
+- `scan_summary` - Summarize open findings by severity, category, source, and hot files
+- `findings_triage` - Get paginated findings with code context for AI triage
+- `finding_fix` - Get focused fix context and remediation hints for one finding
+- `findings_batch_dismiss` - Dismiss or reopen multiple findings in one action
 
 ## Development
 

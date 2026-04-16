@@ -2,7 +2,7 @@
   "name": "vardionix-vscode",
   "displayName": "Vardionix - DevSecOps",
   "description": "Unified DevSecOps tool for scanning, triaging, and remediating security findings with Semgrep, Claude, and Codex",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "publisher": "vardionix",
   "license": "MIT",
   "icon": "icon.png",
@@ -68,6 +68,18 @@
         "title": "Explain Finding",
         "category": "Vardionix",
         "icon": "$(lightbulb)"
+      },
+      {
+        "command": "vardionix.fixFindingWithClaude",
+        "title": "Fix with Claude Code",
+        "category": "Vardionix",
+        "icon": "$(hubot)"
+      },
+      {
+        "command": "vardionix.fixFindingWithCodex",
+        "title": "Fix with Codex",
+        "category": "Vardionix",
+        "icon": "$(terminal-cmd)"
       },
       {
         "command": "vardionix.dismissFinding",
@@ -204,19 +216,29 @@
           "group": "inline@1"
         },
         {
-          "command": "vardionix.dismissFinding",
+          "command": "vardionix.fixFindingWithClaude",
           "when": "view == vardionixFindings && viewItem == finding",
           "group": "inline@2"
         },
         {
-          "command": "vardionix.rescanFindingFile",
+          "command": "vardionix.fixFindingWithCodex",
           "when": "view == vardionixFindings && viewItem == finding",
           "group": "inline@3"
         },
         {
-          "command": "vardionix.showPolicy",
+          "command": "vardionix.dismissFinding",
           "when": "view == vardionixFindings && viewItem == finding",
           "group": "inline@4"
+        },
+        {
+          "command": "vardionix.rescanFindingFile",
+          "when": "view == vardionixFindings && viewItem == finding",
+          "group": "inline@5"
+        },
+        {
+          "command": "vardionix.showPolicy",
+          "when": "view == vardionixFindings && viewItem == finding",
+          "group": "inline@6"
         }
       ]
     },

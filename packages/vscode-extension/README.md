@@ -130,29 +130,63 @@ Vardionix also works as an **MCP (Model Context Protocol) server**, enabling AI 
 
 ### Claude Code Setup
 
-Add to your project's `.claude/settings.json`:
+Preferred setup from the project root:
+
+```bash
+claude mcp add --transport stdio --scope local vardionix -- node /absolute/path/to/vardionix/packages/mcp-server/dist/index.js
+```
+
+Or configure it manually in `~/.claude.json`:
 
 ```json
 {
-  "mcpServers": {
-    "vardionix": {
-      "command": "node",
-      "args": ["./packages/mcp-server/dist/index.js"]
+  "projects": {
+    "/absolute/path/to/vardionix": {
+      "mcpServers": {
+        "vardionix": {
+          "command": "node",
+          "args": ["/absolute/path/to/vardionix/packages/mcp-server/dist/index.js"]
+        }
+      }
     }
   }
 }
 ```
 
-Then ask Claude: *"Scan staged files for security issues"* or *"Explain finding F-abc123"*.
+### Codex Setup
+
+Preferred setup:
+
+```bash
+codex mcp add vardionix -- node /absolute/path/to/vardionix/packages/mcp-server/dist/index.js
+```
+
+Or add it manually to `~/.codex/config.toml` or `.codex/config.toml`:
+
+```toml
+[mcp_servers.vardionix]
+command = "node"
+args = ["/absolute/path/to/vardionix/packages/mcp-server/dist/index.js"]
+```
+
+The extension's **Install MCP** command writes:
+- Claude Code local-scope config to `~/.claude.json` for the current workspace
+- Codex config to `~/.codex/config.toml`
+
+Then ask the agent: *"Scan staged files for security issues"* or *"Explain finding F-abc123"*.
 
 ### MCP Tools
 
 | Tool | Description |
 |------|-------------|
-| `semgrep_scan` | Scan files/directories for security findings |
+| `semgrep_scan` | Run a Semgrep-first scan and merge optional CodeQL/Trivy findings when available |
 | `findings_enrich` | Enrich findings with policy context |
 | `finding_explain` | Get structured finding explanation |
 | `policy_lookup` | Look up security policy by ID |
+| `scan_summary` | Summarize open findings by severity, category, source, and hot files |
+| `findings_triage` | Get paginated findings with code context for AI triage |
+| `finding_fix` | Get focused fix context and remediation hints for one finding |
+| `findings_batch_dismiss` | Dismiss or reopen multiple findings at once |
 
 ## How It Works
 

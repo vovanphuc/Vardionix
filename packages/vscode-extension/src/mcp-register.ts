@@ -3,7 +3,7 @@ import { dirname, join } from "path";
 import { homedir } from "os";
 import type * as vscode from "vscode";
 
-const CLAUDE_SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
+const CLAUDE_CONFIG_PATH = join(homedir(), ".claude.json");
 const CODEX_SETTINGS_PATH = join(homedir(), ".codex", "config.toml");
 const MCP_SERVER_NAME = "vardionix";
 
@@ -15,8 +15,14 @@ interface McpServerConfig {
   [key: string]: unknown;
 }
 
+interface ClaudeProjectConfig {
+  mcpServers?: Record<string, McpServerConfig>;
+  [key: string]: unknown;
+}
+
 interface ClaudeSettings {
   mcpServers?: Record<string, McpServerConfig>;
+  projects?: Record<string, ClaudeProjectConfig>;
   [key: string]: unknown;
 }
 
@@ -34,6 +40,7 @@ export function getMcpTargetLabel(target: McpClientTarget): string {
 export function installMcpServer(
   context: vscode.ExtensionContext,
   target: McpClientTarget,
+  workspaceRoot?: string,
 ): McpRegistrationResult {
   const mcpServerPath = getMcpServerPath(context);
   if (!existsSync(mcpServerPath)) {
@@ -42,7 +49,7 @@ export function installMcpServer(
 
   switch (target) {
     case "claude":
-      return installClaudeRegistration(mcpServerPath);
+      return installClaudeRegistration(mcpServerPath, workspaceRoot);
     case "codex":
       return installCodexRegistration(mcpServerPath);
     default:
@@ -53,6 +60,7 @@ export function installMcpServer(
 export function verifyMcpServerRegistration(
   context: vscode.ExtensionContext,
   target: McpClientTarget,
+  workspaceRoot?: string,
 ): boolean {
   const mcpServerPath = getMcpServerPath(context);
   if (!existsSync(mcpServerPath)) {
@@ -61,7 +69,7 @@ export function verifyMcpServerRegistration(
 
   switch (target) {
     case "claude":
-      return verifyClaudeRegistration(mcpServerPath);
+      return verifyClaudeRegistration(mcpServerPath, workspaceRoot);
     case "codex":
       return verifyCodexRegistration(mcpServerPath);
     default:
@@ -73,15 +81,26 @@ function getMcpServerPath(context: vscode.ExtensionContext): string {
   return join(context.extensionPath, "dist", "mcp-server.js");
 }
 
-function installClaudeRegistration(mcpServerPath: string): McpRegistrationResult {
+function installClaudeRegistration(
+  mcpServerPath: string,
+  workspaceRoot?: string,
+): McpRegistrationResult {
+  const claudeProjectPath = getClaudeProjectPath(workspaceRoot);
   const settings = readClaudeSettings();
-  const existing = settings.mcpServers?.[MCP_SERVER_NAME];
+  const projectEntry = settings.projects?.[claudeProjectPath] ?? {};
+  const existing = projectEntry.mcpServers?.[MCP_SERVER_NAME];
 
-  if (!settings.mcpServers) {
-    settings.mcpServers = {};
+  if (!settings.projects) {
+    settings.projects = {};
+  }
+  if (!settings.projects[claudeProjectPath]) {
+    settings.projects[claudeProjectPath] = {};
+  }
+  if (!settings.projects[claudeProjectPath].mcpServers) {
+    settings.projects[claudeProjectPath].mcpServers = {};
   }
 
-  settings.mcpServers[MCP_SERVER_NAME] = {
+  settings.projects[claudeProjectPath].mcpServers![MCP_SERVER_NAME] = {
     command: "node",
     args: [mcpServerPath],
   };
@@ -90,15 +109,19 @@ function installClaudeRegistration(mcpServerPath: string): McpRegistrationResult
 
   return {
     target: "claude",
-    configPath: CLAUDE_SETTINGS_PATH,
+    configPath: CLAUDE_CONFIG_PATH,
     updated: !isClaudeRegistrationMatch(existing, mcpServerPath),
-    verified: verifyClaudeRegistration(mcpServerPath),
+    verified: verifyClaudeRegistration(mcpServerPath, claudeProjectPath),
   };
 }
 
-function verifyClaudeRegistration(mcpServerPath: string): boolean {
+function verifyClaudeRegistration(mcpServerPath: string, workspaceRoot?: string): boolean {
+  const claudeProjectPath = getClaudeProjectPath(workspaceRoot);
   const settings = readClaudeSettings();
-  return isClaudeRegistrationMatch(settings.mcpServers?.[MCP_SERVER_NAME], mcpServerPath);
+  return isClaudeRegistrationMatch(
+    settings.projects?.[claudeProjectPath]?.mcpServers?.[MCP_SERVER_NAME],
+    mcpServerPath,
+  );
 }
 
 function isClaudeRegistrationMatch(
@@ -115,20 +138,27 @@ function isClaudeRegistrationMatch(
 }
 
 function readClaudeSettings(): ClaudeSettings {
-  if (!existsSync(CLAUDE_SETTINGS_PATH)) {
+  if (!existsSync(CLAUDE_CONFIG_PATH)) {
     return {};
   }
 
   try {
-    return JSON.parse(readFileSync(CLAUDE_SETTINGS_PATH, "utf-8")) as ClaudeSettings;
+    return JSON.parse(readFileSync(CLAUDE_CONFIG_PATH, "utf-8")) as ClaudeSettings;
   } catch {
     return {};
   }
 }
 
 function writeClaudeSettings(settings: ClaudeSettings): void {
-  ensureParentDir(CLAUDE_SETTINGS_PATH);
-  writeFileSync(CLAUDE_SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf-8");
+  ensureParentDir(CLAUDE_CONFIG_PATH);
+  writeFileSync(CLAUDE_CONFIG_PATH, JSON.stringify(settings, null, 2), "utf-8");
+}
+
+function getClaudeProjectPath(workspaceRoot?: string): string {
+  if (!workspaceRoot) {
+    throw new Error("Claude Code MCP registration requires an open workspace folder.");
+  }
+  return workspaceRoot;
 }
 
 function installCodexRegistration(mcpServerPath: string): McpRegistrationResult {

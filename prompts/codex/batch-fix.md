@@ -9,7 +9,7 @@ Multiple security findings have been detected by Vardionix. Your task is to gene
 ## Instructions
 
 1. Use `scan_summary` to understand the overall finding landscape.
-2. Use `findings_triage` to get findings grouped by category with code context.
+2. Use `findings_triage` to get findings by category with code context.
 3. For each true positive, use `finding_fix` to get extended fix context.
 4. Group fixes by file and generate consolidated patches.
 5. Apply fixes in order from most critical to least critical.

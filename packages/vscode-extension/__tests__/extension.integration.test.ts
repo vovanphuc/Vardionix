@@ -8,6 +8,8 @@ const vscodeState = vi.hoisted(() => ({
   errorMessages: [] as string[],
   warningMessages: [] as string[],
   outputLines: [] as string[],
+  openedDocuments: [] as Array<{ language?: string; content?: string }>,
+  clipboardWrites: [] as string[],
   onDidSaveTextDocument: undefined as ((doc: any) => unknown) | undefined,
   onDidChangeTextDocument: undefined as ((event: any) => unknown) | undefined,
   onDidCloseTextDocument: undefined as ((doc: any) => unknown) | undefined,
@@ -68,6 +70,7 @@ vi.mock("vscode", () => ({
       vscodeState.panels.push(panel);
       return panel;
     }),
+    showTextDocument: vi.fn(async (document: any) => document),
     activeTextEditor: { document: { uri: { scheme: "file", fsPath: "/repo/src/app.js" } } },
     onDidChangeActiveTextEditor: vi.fn((callback: (editor: any) => unknown) => {
       vscodeState.onDidChangeActiveTextEditor = callback;
@@ -79,6 +82,10 @@ vi.mock("vscode", () => ({
     getConfiguration: vi.fn(() => ({
       get: vi.fn((_key: string, defaultValue?: any) => defaultValue ?? false),
     })),
+    openTextDocument: vi.fn(async (options: any) => {
+      vscodeState.openedDocuments.push(options);
+      return options;
+    }),
     onDidSaveTextDocument: vi.fn((callback: (doc: any) => unknown) => {
       vscodeState.onDidSaveTextDocument = callback;
       return { dispose: vi.fn() };
@@ -124,6 +131,13 @@ vi.mock("vscode", () => ({
       this.title = title;
       this.kind = kind;
     }
+  },
+  env: {
+    clipboard: {
+      writeText: vi.fn(async (text: string) => {
+        vscodeState.clipboardWrites.push(text);
+      }),
+    },
   },
 }));
 
@@ -203,6 +217,8 @@ describe("VS Code extension integration", () => {
     vscodeState.errorMessages.length = 0;
     vscodeState.warningMessages.length = 0;
     vscodeState.outputLines.length = 0;
+    vscodeState.openedDocuments.length = 0;
+    vscodeState.clipboardWrites.length = 0;
     vscodeState.onDidSaveTextDocument = undefined;
     vscodeState.onDidChangeTextDocument = undefined;
     vscodeState.onDidCloseTextDocument = undefined;
@@ -455,6 +471,7 @@ describe("VS Code extension integration", () => {
     expect(vscodeState.installMcpServer).toHaveBeenCalledWith(
       expect.objectContaining({ extensionPath: "/repo/packages/vscode-extension" }),
       "claude",
+      "/repo",
     );
     expect(vscodeState.informationMessages).toContain(
       "Vardionix: Claude Code: installed and verified",
@@ -474,9 +491,122 @@ describe("VS Code extension integration", () => {
     expect(vscodeState.verifyMcpServerRegistration).toHaveBeenCalledWith(
       expect.objectContaining({ extensionPath: "/repo/packages/vscode-extension" }),
       "codex",
+      undefined,
     );
     expect(vscodeState.informationMessages).toContain(
       "Vardionix: MCP verified for Codex.",
+    );
+  });
+
+  it("prepares a Claude Code fix prompt for a selected finding", async () => {
+    vscodeState.runVardionix
+      .mockResolvedValueOnce({
+        success: true,
+        data: [
+          {
+            kind: "active",
+            id: "F-open",
+            severity: "high",
+            status: "open",
+            title: "Open finding",
+            message: "Potential XSS",
+            filePath: "/repo/src/app.js",
+            startLine: 5,
+            endLine: 5,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          findingId: "F-open",
+          prompt: "## Security Finding Fix Request\n\nFix the XSS issue.",
+          contextFiles: ["/repo/src/app.js"],
+          finding: {
+            id: "F-open",
+            severity: "high",
+            title: "Open finding",
+            filePath: "/repo/src/app.js",
+          },
+        },
+      });
+
+    activate({
+      subscriptions: [],
+      globalStorageUri: { fsPath: "/tmp/storage" },
+      extensionPath: "/repo/packages/vscode-extension",
+    } as any);
+    await vscodeState.commands.get("vardionix.listFindings")?.();
+    await vscodeState.commands.get("vardionix.fixFindingWithClaude")?.({
+      finding: { id: "F-open" },
+    });
+
+    expect(vscodeState.runVardionix).toHaveBeenNthCalledWith(
+      2,
+      ["patch", "F-open", "--agent", "claude"],
+      "/repo",
+    );
+    expect(vscodeState.clipboardWrites[0]).toContain("# Vardionix Fix Request for Claude Code");
+    expect(vscodeState.clipboardWrites[0]).toContain("finding_fix");
+    expect(vscodeState.openedDocuments[0]).toMatchObject({
+      language: "markdown",
+    });
+    expect(vscodeState.informationMessages).toContain(
+      'Vardionix: Prepared Claude Code prompt for "Open finding" and copied it to the clipboard.',
+    );
+  });
+
+  it("warns when preparing a Codex fix prompt without verified MCP setup", async () => {
+    vscodeState.verifyMcpServerRegistration.mockReturnValue(false);
+    vscodeState.runVardionix
+      .mockResolvedValueOnce({
+        success: true,
+        data: [
+          {
+            kind: "active",
+            id: "F-open",
+            severity: "medium",
+            status: "open",
+            title: "Open finding",
+            message: "Potential issue",
+            filePath: "/repo/src/app.js",
+            startLine: 5,
+            endLine: 5,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          findingId: "F-open",
+          prompt: "## Security Finding Fix Request\n\nFix it.",
+          contextFiles: ["/repo/src/app.js"],
+          finding: {
+            id: "F-open",
+            severity: "medium",
+            title: "Open finding",
+            filePath: "/repo/src/app.js",
+          },
+        },
+      });
+
+    activate({
+      subscriptions: [],
+      globalStorageUri: { fsPath: "/tmp/storage" },
+      extensionPath: "/repo/packages/vscode-extension",
+    } as any);
+    await vscodeState.commands.get("vardionix.listFindings")?.();
+    await vscodeState.commands.get("vardionix.fixFindingWithCodex")?.({
+      finding: { id: "F-open" },
+    });
+
+    expect(vscodeState.runVardionix).toHaveBeenNthCalledWith(
+      2,
+      ["patch", "F-open", "--agent", "codex"],
+      "/repo",
+    );
+    expect(vscodeState.warningMessages).toContain(
+      'Vardionix: Prepared Codex prompt for "Open finding" and copied it to the clipboard. Install MCP for Codex if you want the agent to use Vardionix tools directly.',
     );
   });
 });

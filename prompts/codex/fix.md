@@ -17,7 +17,7 @@ A security finding has been detected by Vardionix. Your task is to generate a mi
    - Does not break existing functionality.
    - Follows the remediation guidance from the internal policy.
    - Includes appropriate error handling.
-6. After generating the fix, run `vardionix validate` to verify.
+6. After generating the fix, re-scan the affected file with `semgrep_scan` or `vardionix scan file` to verify the finding is resolved.
 
 ## Output Format
 

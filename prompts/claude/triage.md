@@ -87,7 +87,7 @@ End with:
 
 ## Tools Available
 
-- `semgrep_scan` - Run multi-layer security scan (Semgrep + CodeQL + Trivy)
+- `semgrep_scan` - Run a Semgrep-first security scan with optional CodeQL/Trivy findings when available
 - `scan_summary` - Get scan results overview with category breakdown
 - `findings_triage` - Get findings batch with code context for triage
 - `finding_fix` - Get extended code context and fix hints for a finding

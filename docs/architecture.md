@@ -4,8 +4,8 @@
 
 1. **CLI-first**: Core logic lives in the CLI and MCP server, not in UI extensions
 2. **MCP-first**: All clients use the Vardionix MCP server for integration
-3. **Local-first scanning**: Semgrep runs locally; remote only when needed
-4. **Template-based remote execution**: Only whitelisted job templates
+3. **Local-first scanning**: Semgrep, CodeQL, and Trivy run locally when enabled
+4. **Deterministic triage state**: active and excluded findings are stored separately
 5. **Agent-agnostic**: Claude Code, Codex, VS Code are entry points to the same workflow
 
 ## Package Dependency Graph
@@ -26,12 +26,15 @@ Layer 3:  @vardionix/mcp-server      (core + schemas)
 ```
 CLI / MCP request
     → ScanOrchestrator.scan()
-        → SemgrepRunner.scan()              (spawn semgrep --json)
-        → parseSemgrepOutput()              (raw JSON → parsed findings)
-        → normalizeFindings()               (parsed → Finding schema, deterministic IDs)
-        → PolicyEnricher.enrichFindings()   (add policy context)
-        → FindingsStore.upsertFindings()    (persist to SQLite)
-        → return ScanResult
+        → SemgrepRunner.scan()                (fast pattern scan)
+        → CodeQLRunner.scan()                 (optional deep semantic scan)
+        → TrivyRunner.scan()                  (optional dependency scan)
+        → normalize + deduplicate findings
+        → PolicyEnricher.enrichFindings()
+        → FindingFilterService.filter()
+        → FindingsStore.upsertFindings()      (active findings)
+        → ExcludedFindingsStore.upsertFindings() (excluded findings)
+        → return ScanSummary
 ```
 
 ### Finding ID Generation
@@ -49,14 +52,12 @@ This ensures re-scanning produces the same IDs, enabling upsert and status track
 
 The MCP server is a thin translation layer over `@vardionix/core`. It:
 - Connects via stdio transport
-- Registers 6 tools with Zod input schemas
+- Registers 8 tools with Zod input schemas
 - Delegates all logic to core services
-- Returns structured JSON responses
+- Returns structured JSON or structured text, depending on the tool
 
 ## Security Model
 
 - Secrets stored in OS keychain / SecretStorage
 - No raw credentials in MCP output
-- Remote execution only via whitelisted templates
-- User approval required before sending code to remote
 - Semgrep metrics disabled by default
