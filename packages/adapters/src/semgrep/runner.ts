@@ -33,15 +33,55 @@ export class SemgrepScanError extends Error {
 export interface SemgrepRunnerOptions {
   semgrepPath?: string;
   timeout?: number;
+  excludePatterns?: string[];
 }
+
+/** Directories and patterns that should never be scanned. */
+const DEFAULT_EXCLUDE_PATTERNS = [
+  // JS/TS build output
+  ".next",
+  "node_modules",
+  "dist",
+  "build",
+  "out",
+  ".output",
+  ".nuxt",
+  ".svelte-kit",
+  // Bundler caches
+  ".turbo",
+  ".cache",
+  ".parcel-cache",
+  ".webpack",
+  // Python
+  "__pycache__",
+  ".venv",
+  "venv",
+  "env",
+  ".eggs",
+  "*.egg-info",
+  // Java / Kotlin
+  "target",
+  // Go
+  "vendor",
+  // Misc
+  ".git",
+  "coverage",
+  ".nyc_output",
+  ".vscode-test",
+  "*.min.js",
+  "*.bundle.js",
+  "*.chunk.js",
+];
 
 export class SemgrepRunner {
   private semgrepPath: string;
   private timeout: number;
+  private excludePatterns: string[];
 
   constructor(options: SemgrepRunnerOptions = {}) {
     this.semgrepPath = options.semgrepPath ?? "semgrep";
     this.timeout = options.timeout ?? 300_000;
+    this.excludePatterns = options.excludePatterns ?? DEFAULT_EXCLUDE_PATTERNS;
   }
 
   checkInstalled(): boolean {
@@ -65,11 +105,14 @@ export class SemgrepRunner {
       throw new SemgrepNotInstalledError();
     }
 
+    const excludeArgs = this.excludePatterns.flatMap((p) => ["--exclude", p]);
+
     const cmdArgs = [
       "scan",
       "--json",
       "--config",
       args.ruleset,
+      ...excludeArgs,
       ...(args.extraArgs ?? []),
       ...args.targets,
     ];

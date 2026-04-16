@@ -4,6 +4,7 @@ import type { ExcludedFinding, Severity } from "@vardionix/schemas";
 export interface ExcludedFindingFilters {
   severity?: Severity;
   filePath?: string;
+  filePathPrefix?: string;
   ruleId?: string;
   limit?: number;
   offset?: number;
@@ -140,6 +141,10 @@ export class ExcludedFindingsStore {
     if (filters.filePath) {
       conditions.push("file_path = @filePath");
       params.filePath = filters.filePath;
+    }
+    if (filters.filePathPrefix) {
+      conditions.push("file_path LIKE @filePathPrefix || '%'");
+      params.filePathPrefix = filters.filePathPrefix;
     }
     if (filters.ruleId) {
       conditions.push("rule_id = @ruleId");

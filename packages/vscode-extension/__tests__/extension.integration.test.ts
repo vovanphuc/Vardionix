@@ -9,13 +9,27 @@ const vscodeState = vi.hoisted(() => ({
   quickPickSelectionIndex: 0,
   updateDiagnostics: vi.fn(),
   runVardionix: vi.fn(),
-  findingsTreeInstances: [] as Array<{ findings: unknown[]; setFindings: (findings: unknown[]) => void }>,
+  findingsTreeInstances: [] as Array<{
+    findings: unknown[];
+    setFindings: (findings: unknown[]) => void;
+    getSeverityCounts: () => Record<string, number>;
+  }>,
 }));
 
 vi.mock("vscode", () => ({
   window: {
     createTreeView: vi.fn(() => ({ dispose: vi.fn() })),
-    withProgress: vi.fn(async (_options, task) => task()),
+    createStatusBarItem: vi.fn(() => ({
+      text: "",
+      tooltip: "",
+      command: "",
+      name: "",
+      backgroundColor: undefined,
+      show: vi.fn(),
+      hide: vi.fn(),
+      dispose: vi.fn(),
+    })),
+    withProgress: vi.fn(async (_options, task) => task({ report: vi.fn() })),
     showInformationMessage: vi.fn((message: string) => {
       vscodeState.informationMessages.push(message);
       return Promise.resolve(message);
@@ -55,12 +69,10 @@ vi.mock("vscode", () => ({
       dispose: vi.fn(),
     })),
   },
-  ProgressLocation: {
-    Notification: 1,
-  },
-  ViewColumn: {
-    Beside: 2,
-  },
+  StatusBarAlignment: { Left: 1, Right: 2 },
+  ThemeColor: class ThemeColor { constructor(public id: string) {} },
+  ProgressLocation: { Notification: 1 },
+  ViewColumn: { Beside: 2 },
 }));
 
 vi.mock("../src/runner.ts", () => ({
@@ -74,6 +86,12 @@ vi.mock("../src/diagnostics.ts", () => ({
     dispose: vi.fn(),
   }),
   updateDiagnostics: (...args: any[]) => vscodeState.updateDiagnostics(...args),
+}));
+
+vi.mock("../src/semgrep-downloader.ts", () => ({
+  ensureSemgrep: () => Promise.resolve(),
+  getSemgrepPath: () => "semgrep",
+  waitForSemgrep: () => Promise.resolve(),
 }));
 
 vi.mock("../src/findings-tree.ts", () => ({
@@ -91,7 +109,17 @@ vi.mock("../src/findings-tree.ts", () => ({
     getFindings() {
       return this.findings;
     }
+
+    getSeverityCounts() {
+      const counts: Record<string, number> = {};
+      for (const f of this.findings as any[]) {
+        const sev = f.policySeverityOverride ?? f.severity;
+        counts[sev] = (counts[sev] ?? 0) + 1;
+      }
+      return counts;
+    }
   },
+  FindingItem: class FakeFindingItem {},
 }));
 
 import { activate } from "../src/extension.js";
@@ -127,11 +155,11 @@ describe("VS Code extension integration", () => {
       ],
     });
 
-    activate({ subscriptions: [] } as any);
+    activate({ subscriptions: [], globalStorageUri: { fsPath: "/tmp/storage" } } as any);
     await vscodeState.commands.get("vardionix.listFindings")?.();
 
     expect(vscodeState.runVardionix).toHaveBeenCalledWith(
-      ["findings", "list", "--open-only"],
+      ["findings", "list", "--open-only", "--workspace", "/repo"],
       "/repo",
     );
     expect(vscodeState.findingsTreeInstances).toHaveLength(1);
@@ -162,11 +190,11 @@ describe("VS Code extension integration", () => {
       ],
     });
 
-    activate({ subscriptions: [] } as any);
+    activate({ subscriptions: [], globalStorageUri: { fsPath: "/tmp/storage" } } as any);
     await vscodeState.commands.get("vardionix.listExcludedFindings")?.();
 
     expect(vscodeState.runVardionix).toHaveBeenCalledWith(
-      ["findings", "list", "--excluded"],
+      ["findings", "list", "--excluded", "--workspace", "/repo"],
       "/repo",
     );
     expect(vscodeState.panels).toHaveLength(1);

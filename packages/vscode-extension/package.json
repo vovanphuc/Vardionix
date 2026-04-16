@@ -2,7 +2,7 @@
   "name": "vardionix-vscode",
   "displayName": "Vardionix - DevSecOps",
   "description": "Unified DevSecOps tool for scanning, triaging, and remediating security findings with Semgrep, Claude, and Codex",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "vardionix",
   "license": "MIT",
   "icon": "icon.png",
@@ -23,7 +23,9 @@
     "semgrep",
     "devsecops",
     "vulnerability",
-    "scanner"
+    "scanner",
+    "sast",
+    "owasp"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -33,47 +35,56 @@
     "commands": [
       {
         "command": "vardionix.scanCurrentFile",
-        "title": "Vardionix: Scan Current File",
+        "title": "Scan Current File",
+        "category": "Vardionix",
         "icon": "$(shield)"
       },
       {
         "command": "vardionix.scanStagedFiles",
-        "title": "Vardionix: Scan Staged Files",
+        "title": "Scan Staged Files",
+        "category": "Vardionix",
         "icon": "$(git-commit)"
       },
       {
         "command": "vardionix.scanWorkspace",
-        "title": "Vardionix: Scan Workspace",
+        "title": "Scan Workspace",
+        "category": "Vardionix",
         "icon": "$(folder)"
       },
       {
         "command": "vardionix.listFindings",
-        "title": "Vardionix: List Findings",
+        "title": "List Findings",
+        "category": "Vardionix",
         "icon": "$(list-unordered)"
       },
       {
         "command": "vardionix.listExcludedFindings",
-        "title": "Vardionix: List Excluded Findings",
+        "title": "List Excluded Findings",
+        "category": "Vardionix",
         "icon": "$(filter)"
       },
       {
         "command": "vardionix.explainFinding",
-        "title": "Vardionix: Explain Finding",
-        "icon": "$(info)"
+        "title": "Explain Finding",
+        "category": "Vardionix",
+        "icon": "$(lightbulb)"
       },
       {
         "command": "vardionix.dismissFinding",
-        "title": "Vardionix: Dismiss Finding",
+        "title": "Dismiss Finding",
+        "category": "Vardionix",
         "icon": "$(close)"
       },
       {
         "command": "vardionix.showPolicy",
-        "title": "Vardionix: Show Policy",
+        "title": "Show Policy",
+        "category": "Vardionix",
         "icon": "$(law)"
       },
       {
         "command": "vardionix.refreshFindings",
-        "title": "Vardionix: Refresh Findings",
+        "title": "Refresh Findings",
+        "category": "Vardionix",
         "icon": "$(refresh)"
       }
     ],
@@ -95,6 +106,12 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "vardionixFindings",
+        "contents": "No security findings yet.\n\nRun a scan to get started.\n[Scan Current File](command:vardionix.scanCurrentFile)\n[Scan Workspace](command:vardionix.scanWorkspace)\n[Scan Staged Files](command:vardionix.scanStagedFiles)"
+      }
+    ],
     "menus": {
       "editor/title": [
         {
@@ -105,30 +122,41 @@
       ],
       "view/title": [
         {
-          "command": "vardionix.refreshFindings",
+          "command": "vardionix.scanWorkspace",
           "when": "view == vardionixFindings",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "vardionix.scanStagedFiles",
           "when": "view == vardionixFindings",
-          "group": "navigation"
+          "group": "navigation@2"
+        },
+        {
+          "command": "vardionix.refreshFindings",
+          "when": "view == vardionixFindings",
+          "group": "navigation@3"
         },
         {
           "command": "vardionix.listExcludedFindings",
           "when": "view == vardionixFindings",
-          "group": "navigation"
+          "group": "overflow@1"
+        },
+        {
+          "command": "vardionix.showPolicy",
+          "when": "view == vardionixFindings",
+          "group": "overflow@2"
         }
       ],
       "view/item/context": [
         {
           "command": "vardionix.explainFinding",
           "when": "view == vardionixFindings && viewItem == finding",
-          "group": "inline"
+          "group": "inline@1"
         },
         {
           "command": "vardionix.dismissFinding",
-          "when": "view == vardionixFindings && viewItem == finding"
+          "when": "view == vardionixFindings && viewItem == finding",
+          "group": "inline@2"
         }
       ]
     },
@@ -138,17 +166,19 @@
         "vardionix.semgrepPath": {
           "type": "string",
           "default": "semgrep",
-          "description": "Path to the Semgrep binary"
+          "description": "Path to the Semgrep binary. Leave as 'semgrep' to auto-detect or auto-download.",
+          "scope": "machine"
         },
         "vardionix.defaultRuleset": {
           "type": "string",
           "default": "auto",
-          "description": "Default Semgrep ruleset to use"
+          "description": "Default Semgrep ruleset to use for scans."
         },
         "vardionix.scanOnSave": {
           "type": "boolean",
           "default": false,
-          "description": "Automatically scan files on save"
+          "description": "Automatically scan files when saved.",
+          "scope": "resource"
         },
         "vardionix.severityFilter": {
           "type": "array",
@@ -157,7 +187,7 @@
             "type": "string",
             "enum": ["critical", "high", "medium", "low", "info"]
           },
-          "description": "Only show findings at or above these severity levels"
+          "description": "Only show findings at these severity levels. Leave empty to show all."
         }
       }
     }

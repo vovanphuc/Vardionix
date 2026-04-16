@@ -5,6 +5,7 @@ export interface FindingFilters {
   status?: FindingStatus;
   severity?: Severity;
   filePath?: string;
+  filePathPrefix?: string;
   ruleId?: string;
   limit?: number;
   offset?: number;
@@ -153,6 +154,10 @@ export class FindingsStore {
     if (filters.filePath) {
       conditions.push("file_path = @filePath");
       params.filePath = filters.filePath;
+    }
+    if (filters.filePathPrefix) {
+      conditions.push("file_path LIKE @filePathPrefix || '%'");
+      params.filePathPrefix = filters.filePathPrefix;
     }
     if (filters.ruleId) {
       conditions.push("rule_id = @ruleId");

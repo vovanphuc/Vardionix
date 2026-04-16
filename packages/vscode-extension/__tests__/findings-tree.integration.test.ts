@@ -13,18 +13,29 @@ vi.mock("vscode", () => {
   class TreeItem {
     label: string;
     description?: string;
-    tooltip?: string;
+    tooltip?: unknown;
     contextValue?: string;
     iconPath?: unknown;
     command?: unknown;
+    collapsibleState?: number;
 
-    constructor(label: string) {
+    constructor(label: string, collapsibleState?: number) {
       this.label = label;
+      this.collapsibleState = collapsibleState;
     }
   }
 
   class ThemeIcon {
+    constructor(public id: string, public color?: unknown) {}
+  }
+
+  class ThemeColor {
     constructor(public id: string) {}
+  }
+
+  class MarkdownString {
+    value: string;
+    constructor(value?: string) { this.value = value ?? ""; }
   }
 
   class Range {
@@ -40,9 +51,13 @@ vi.mock("vscode", () => {
     EventEmitter,
     TreeItem,
     ThemeIcon,
+    ThemeColor,
+    MarkdownString,
     Range,
     TreeItemCollapsibleState: {
       None: 0,
+      Collapsed: 1,
+      Expanded: 2,
     },
     Uri: {
       file: (path: string) => ({ fsPath: path }),
@@ -58,7 +73,7 @@ vi.mock("vscode", () => {
 import { FindingsTreeProvider } from "../src/findings-tree.js";
 
 describe("FindingsTreeProvider integration", () => {
-  it("keeps only open active findings and orders by effective severity", () => {
+  it("keeps only open active findings and groups by effective severity", () => {
     const provider = new FindingsTreeProvider();
 
     provider.setFindings([
@@ -98,10 +113,25 @@ describe("FindingsTreeProvider integration", () => {
       },
     ] as any);
 
-    const children = provider.getChildren();
+    // Only open findings kept
+    expect(provider.getFindings().map((f) => f.id)).toEqual(["F-low", "F-high"]);
 
-    expect(provider.getFindings().map((finding) => finding.id)).toEqual(["F-low", "F-high"]);
-    expect(children.map((item) => item.finding.id)).toEqual(["F-high", "F-low"]);
-    expect(children[0].description).toBe("src/high.js:8");
+    // Root children are severity groups
+    const groups = provider.getChildren();
+    expect(groups.map((g) => g.label)).toEqual(["Critical", "Low"]);
+
+    // Children of severity group are findings
+    const criticalFindings = provider.getChildren(groups[0]);
+    expect(criticalFindings).toHaveLength(1);
+    expect(criticalFindings[0].label).toBe("Escalated issue");
+    expect(criticalFindings[0].description).toBe("src/high.js:8");
+
+    const lowFindings = provider.getChildren(groups[1]);
+    expect(lowFindings).toHaveLength(1);
+    expect(lowFindings[0].label).toBe("Low issue");
+
+    // Severity counts
+    const counts = provider.getSeverityCounts();
+    expect(counts).toEqual({ critical: 1, low: 1 });
   });
 });

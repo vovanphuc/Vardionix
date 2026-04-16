@@ -28,6 +28,7 @@ export function createFindingsCommand(
     .option("--open-only", "Show only open active findings")
     .option("--excluded", "Show excluded findings instead of active findings")
     .option("--severity <level>", "Filter by severity")
+    .option("--workspace <path>", "Only show findings within this directory")
     .option("--json", "Output as JSON")
     .option("--limit <n>", "Limit results", "100")
     .action((opts) => {
@@ -40,6 +41,7 @@ export function createFindingsCommand(
       const filters: Record<string, unknown> = {};
       if (opts.severity) filters.severity = opts.severity as Severity;
       if (opts.limit) filters.limit = parseInt(opts.limit, 10);
+      if (opts.workspace) filters.filePathPrefix = opts.workspace;
 
       if (opts.excluded) {
         const results = excludedFindingsStore.listFindings(filters as never);

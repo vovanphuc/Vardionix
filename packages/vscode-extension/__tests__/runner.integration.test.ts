@@ -24,6 +24,11 @@ vi.mock("node:child_process", () => ({
   execFile: (...args: any[]) => runnerState.execFile(...args),
 }));
 
+vi.mock("../src/semgrep-downloader", () => ({
+  getSemgrepPath: () => "semgrep",
+  waitForSemgrep: () => Promise.resolve(),
+}));
+
 import { runVardionix } from "../src/runner";
 
 describe("runVardionix integration", () => {

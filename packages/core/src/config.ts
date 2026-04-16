@@ -83,22 +83,31 @@ export function resolveRuleset(ruleset: string): string {
 export function loadConfig(configPath?: string): VardionixConfig {
   const path = configPath ?? getConfigPath();
 
+  let config: VardionixConfig;
+
   if (!existsSync(path)) {
-    return { ...DEFAULT_CONFIG };
+    config = { ...DEFAULT_CONFIG };
+  } else {
+    try {
+      const content = readFileSync(path, "utf-8");
+      const parsed = YAML.parse(content) as Partial<VardionixConfig>;
+
+      config = {
+        semgrep: { ...DEFAULT_CONFIG.semgrep, ...parsed.semgrep },
+        policy: { ...DEFAULT_CONFIG.policy, ...parsed.policy },
+        output: { ...DEFAULT_CONFIG.output, ...parsed.output },
+      };
+    } catch {
+      config = { ...DEFAULT_CONFIG };
+    }
   }
 
-  try {
-    const content = readFileSync(path, "utf-8");
-    const parsed = YAML.parse(content) as Partial<VardionixConfig>;
-
-    return {
-      semgrep: { ...DEFAULT_CONFIG.semgrep, ...parsed.semgrep },
-      policy: { ...DEFAULT_CONFIG.policy, ...parsed.policy },
-      output: { ...DEFAULT_CONFIG.output, ...parsed.output },
-    };
-  } catch {
-    return { ...DEFAULT_CONFIG };
+  // Allow VS Code extension (or other callers) to override semgrep path via env var
+  if (process.env.VARDIONIX_SEMGREP_PATH) {
+    config.semgrep.path = process.env.VARDIONIX_SEMGREP_PATH;
   }
+
+  return config;
 }
 
 export function resolvePolicyDirectories(config: VardionixConfig): string[] {
