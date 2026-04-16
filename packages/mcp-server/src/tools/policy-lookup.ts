@@ -1,10 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ScanOrchestrator } from "@vardionix/core";
+import type { ScanService } from "@vardionix/core";
 
 export function registerPolicyLookup(
   server: McpServer,
-  orchestrator: ScanOrchestrator,
+  scanService: ScanService,
 ): void {
   server.tool(
     "policy_lookup",
@@ -14,7 +14,7 @@ export function registerPolicyLookup(
     },
     async (args) => {
       try {
-        const policyStore = orchestrator.getPolicyStore();
+        const policyStore = scanService.getPolicyStore();
         const policy = policyStore.getPolicy(args.policyId);
 
         if (!policy) {

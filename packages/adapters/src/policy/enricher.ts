@@ -1,17 +1,17 @@
-import type { Finding } from "@vardionix/schemas";
+import type { ActiveFinding } from "@vardionix/schemas";
 import type { PolicyLocalStore } from "./local-store.js";
 
-export interface EnrichedFinding extends Finding {
+export interface EnrichedFinding extends ActiveFinding {
   policyId: string | null;
   policyTitle: string | null;
-  policySeverityOverride: Finding["severity"] | null;
+  policySeverityOverride: ActiveFinding["severity"] | null;
   remediationGuidance: string | null;
 }
 
 export class PolicyEnricher {
   constructor(private policyStore: PolicyLocalStore) {}
 
-  enrichFinding(finding: Finding): EnrichedFinding {
+  enrichFinding(finding: ActiveFinding): EnrichedFinding {
     const policies = this.policyStore.findPoliciesForRule(finding.ruleId);
 
     if (policies.length === 0) {
@@ -30,7 +30,7 @@ export class PolicyEnricher {
     };
   }
 
-  enrichFindings(findings: Finding[]): EnrichedFinding[] {
+  enrichFindings(findings: ActiveFinding[]): EnrichedFinding[] {
     return findings.map((f) => this.enrichFinding(f));
   }
 }

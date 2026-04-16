@@ -1,10 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ScanOrchestrator } from "@vardionix/core";
+import type { ScanService } from "@vardionix/core";
 
 export function registerFindingsEnrich(
   server: McpServer,
-  orchestrator: ScanOrchestrator,
+  scanService: ScanService,
 ): void {
   server.tool(
     "findings_enrich",
@@ -17,7 +17,7 @@ export function registerFindingsEnrich(
     },
     async (args) => {
       try {
-        const enriched = orchestrator.enrichFindings(args.findingIds);
+        const enriched = scanService.enrichFindings(args.findingIds);
 
         return {
           content: [

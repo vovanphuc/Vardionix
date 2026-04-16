@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import { FindingStatus, Severity, type Finding } from "@vardionix/schemas";
+import {
+  FindingStatus,
+  Severity,
+  type ActiveFinding,
+} from "@vardionix/schemas";
 import type { ParsedSemgrepFinding } from "./parser.js";
 
 export function generateFindingId(
@@ -27,10 +31,11 @@ function toSeverity(raw: string): Severity {
 
 export function normalizeFindings(
   parsed: ParsedSemgrepFinding[],
-): Finding[] {
+): ActiveFinding[] {
   const now = new Date().toISOString();
 
   return parsed.map((p) => ({
+    kind: "active",
     id: generateFindingId(p.checkId, p.filePath, p.startLine),
     ruleId: p.checkId,
     source: "semgrep",
@@ -48,8 +53,6 @@ export function normalizeFindings(
     confidenceScore: inferConfidence(p),
     exploitScenario: null,
     category: inferCategory(p.checkId),
-    excluded: false,
-    exclusionReason: null,
     policyId: null,
     policyTitle: null,
     policySeverityOverride: null,
@@ -61,15 +64,15 @@ export function normalizeFindings(
   }));
 }
 
-function inferConfidence(p: ParsedSemgrepFinding): number {
+function inferConfidence(p: ParsedSemgrepFinding): number | null {
   const conf = p.metadata?.confidence;
   if (conf === "HIGH") return 0.9;
   if (conf === "MEDIUM") return 0.7;
   if (conf === "LOW") return 0.5;
-  return 0.7; // default
+  return null;
 }
 
-type FindingCategory = Finding["category"];
+type FindingCategory = ActiveFinding["category"];
 
 function inferCategory(checkId: string): FindingCategory {
   const id = checkId.toLowerCase();

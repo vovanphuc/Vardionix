@@ -1,4 +1,4 @@
-import type { Finding } from "@vardionix/schemas";
+import type { ActiveFinding } from "@vardionix/schemas";
 
 interface SarifLog {
   $schema: string;
@@ -55,7 +55,7 @@ function severityToLevel(severity: string): string {
   }
 }
 
-export function formatSarif(findings: Finding[]): string {
+export function formatSarif(findings: ActiveFinding[]): string {
   const ruleMap = new Map<string, SarifRule>();
 
   for (const f of findings) {

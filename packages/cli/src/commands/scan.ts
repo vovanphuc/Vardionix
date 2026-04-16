@@ -1,13 +1,13 @@
 import { Command } from "commander";
 import { ScanScope, type Severity } from "@vardionix/schemas";
-import type { ScanOrchestrator } from "@vardionix/core";
+import type { ScanService } from "@vardionix/core";
 import type { FindingsStore } from "@vardionix/store";
 import { formatScanSummary, formatFindingsTable } from "../formatters/table.js";
 import { formatJson } from "../formatters/json.js";
 import { formatSarif } from "../formatters/sarif.js";
 
 export function createScanCommand(
-  orchestrator: ScanOrchestrator,
+  scanService: ScanService,
   findingsStore: FindingsStore,
 ): Command {
   const scan = new Command("scan").description("Scan code for security findings");
@@ -21,7 +21,7 @@ export function createScanCommand(
     .option("--severity <levels>", "Filter by severity (comma-separated)")
     .option("--fail-on <level>", "Exit with code 1 if findings at or above level")
     .action(async (path, opts) => {
-      await runScan(orchestrator, findingsStore, ScanScope.FILE, path, opts);
+      await runScan(scanService, findingsStore, ScanScope.FILE, path, opts);
     });
 
   scan
@@ -33,7 +33,7 @@ export function createScanCommand(
     .option("--severity <levels>", "Filter by severity (comma-separated)")
     .option("--fail-on <level>", "Exit with code 1 if findings at or above level")
     .action(async (path, opts) => {
-      await runScan(orchestrator, findingsStore, ScanScope.DIR, path, opts);
+      await runScan(scanService, findingsStore, ScanScope.DIR, path, opts);
     });
 
   scan
@@ -45,7 +45,7 @@ export function createScanCommand(
     .option("--severity <levels>", "Filter by severity (comma-separated)")
     .option("--fail-on <level>", "Exit with code 1 if findings at or above level")
     .action(async (opts) => {
-      await runScan(orchestrator, findingsStore, ScanScope.STAGED, undefined, opts);
+      await runScan(scanService, findingsStore, ScanScope.STAGED, undefined, opts);
     });
 
   scan
@@ -58,7 +58,7 @@ export function createScanCommand(
     .option("--fail-on <level>", "Exit with code 1 if findings at or above level")
     .option("--max-files <n>", "Maximum files to scan", "300")
     .action(async (opts) => {
-      await runScan(orchestrator, findingsStore, ScanScope.WORKSPACE, undefined, opts);
+      await runScan(scanService, findingsStore, ScanScope.WORKSPACE, undefined, opts);
     });
 
   return scan;
@@ -73,7 +73,7 @@ interface ScanOpts {
 }
 
 async function runScan(
-  orchestrator: ScanOrchestrator,
+  scanService: ScanService,
   findingsStore: FindingsStore,
   scope: ScanScope,
   target: string | undefined,
@@ -84,7 +84,7 @@ async function runScan(
       ? (opts.severity.split(",").map((s) => s.trim()) as Severity[])
       : undefined;
 
-    const result = await orchestrator.scan({
+    const result = await scanService.scan({
       scope,
       target,
       ruleset: opts.ruleset,

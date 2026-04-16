@@ -40,17 +40,6 @@ CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity);
 CREATE INDEX IF NOT EXISTS idx_findings_file ON findings(file_path);
 CREATE INDEX IF NOT EXISTS idx_findings_rule ON findings(rule_id);
 
-CREATE TABLE IF NOT EXISTS jobs (
-  id TEXT PRIMARY KEY,
-  template_id TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',
-  finding_id TEXT,
-  created_at TEXT NOT NULL,
-  completed_at TEXT,
-  result TEXT,
-  logs TEXT
-);
-
 CREATE TABLE IF NOT EXISTS scan_runs (
   id TEXT PRIMARY KEY,
   scope TEXT NOT NULL,
@@ -60,6 +49,60 @@ CREATE TABLE IF NOT EXISTS scan_runs (
   total_findings INTEGER,
   findings_by_severity TEXT
 );
+`;
+
+const MIGRATION_002 = `
+CREATE TABLE IF NOT EXISTS excluded_findings (
+  id TEXT PRIMARY KEY,
+  rule_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'semgrep',
+  severity TEXT NOT NULL,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  start_line INTEGER NOT NULL,
+  end_line INTEGER NOT NULL,
+  start_col INTEGER,
+  end_col INTEGER,
+  code_snippet TEXT,
+  metadata TEXT,
+  confidence_score REAL,
+  exploit_scenario TEXT,
+  category TEXT,
+  policy_id TEXT,
+  policy_title TEXT,
+  policy_severity_override TEXT,
+  remediation_guidance TEXT,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  exclusion_reason TEXT NOT NULL,
+  excluded_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_excluded_findings_severity ON excluded_findings(severity);
+CREATE INDEX IF NOT EXISTS idx_excluded_findings_file ON excluded_findings(file_path);
+CREATE INDEX IF NOT EXISTS idx_excluded_findings_rule ON excluded_findings(rule_id);
+CREATE INDEX IF NOT EXISTS idx_excluded_findings_excluded_at ON excluded_findings(excluded_at);
+
+INSERT OR REPLACE INTO excluded_findings (
+  id, rule_id, source, severity, title, message,
+  file_path, start_line, end_line, start_col, end_col,
+  code_snippet, metadata, confidence_score, exploit_scenario, category,
+  policy_id, policy_title, policy_severity_override, remediation_guidance,
+  first_seen_at, last_seen_at, exclusion_reason, excluded_at
+)
+SELECT
+  id, rule_id, source, severity, title, message,
+  file_path, start_line, end_line, start_col, end_col,
+  code_snippet, metadata, confidence_score, exploit_scenario, category,
+  policy_id, policy_title, policy_severity_override, remediation_guidance,
+  first_seen_at, last_seen_at,
+  COALESCE(exclusion_reason, 'Excluded during scan filtering'),
+  COALESCE(last_seen_at, first_seen_at)
+FROM findings
+WHERE COALESCE(excluded, 0) = 1;
+
+DELETE FROM findings WHERE COALESCE(excluded, 0) = 1;
 `;
 
 let db: Database.Database | null = null;
@@ -111,6 +154,13 @@ function runMigrations(database: Database.Database): void {
     database
       .prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)")
       .run(1, new Date().toISOString());
+  }
+
+  if (!applied.has(2)) {
+    database.exec(MIGRATION_002);
+    database
+      .prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)")
+      .run(2, new Date().toISOString());
   }
 }
 

@@ -8,7 +8,8 @@ export {
   resolvePolicyDirectories,
   type VardionixConfig,
 } from "./config.js";
-export { ScanOrchestrator } from "./scan-orchestrator.js";
+export { createAppContext, type VardionixAppContext } from "./app-context.js";
+export { ScanService } from "./scan-orchestrator.js";
 export {
   ExplainService,
   type FindingExplanation,
@@ -17,4 +18,3 @@ export {
   PatchService,
   type PatchContext,
 } from "./patch-service.js";
-export { ValidateService } from "./validate-service.js";

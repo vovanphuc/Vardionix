@@ -3,12 +3,13 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PolicyLocalStore } from "../../src/policy/local-store.js";
 import { PolicyEnricher } from "../../src/policy/enricher.js";
-import { FindingStatus, Severity, type Finding } from "@vardionix/schemas";
+import { FindingStatus, Severity, type ActiveFinding } from "@vardionix/schemas";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-function makeFinding(overrides: Partial<Finding> = {}): Finding {
+function makeFinding(overrides: Partial<ActiveFinding> = {}): ActiveFinding {
   return {
+    kind: "active",
     id: "F-test",
     ruleId: "test.rule",
     source: "semgrep",
@@ -24,8 +25,6 @@ function makeFinding(overrides: Partial<Finding> = {}): Finding {
     confidenceScore: null,
     exploitScenario: null,
     category: null,
-    excluded: false,
-    exclusionReason: null,
     policyId: null,
     policyTitle: null,
     policySeverityOverride: null,

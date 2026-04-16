@@ -1,9 +1,9 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import type { ScanOrchestrator } from "@vardionix/core";
+import type { ScanService } from "@vardionix/core";
 import { formatJson } from "../formatters/json.js";
 
-export function createPolicyCommand(orchestrator: ScanOrchestrator): Command {
+export function createPolicyCommand(scanService: ScanService): Command {
   const policy = new Command("policy").description("Manage security policies");
 
   policy
@@ -11,7 +11,7 @@ export function createPolicyCommand(orchestrator: ScanOrchestrator): Command {
     .description("Show details of a security policy")
     .option("--json", "Output as JSON")
     .action((policyId, opts) => {
-      const policyStore = orchestrator.getPolicyStore();
+      const policyStore = scanService.getPolicyStore();
       const result = policyStore.getPolicy(policyId);
 
       if (!result) {
@@ -56,7 +56,7 @@ export function createPolicyCommand(orchestrator: ScanOrchestrator): Command {
     .description("List all loaded policies")
     .option("--json", "Output as JSON")
     .action((opts) => {
-      const policyStore = orchestrator.getPolicyStore();
+      const policyStore = scanService.getPolicyStore();
       const all = policyStore.getAllPolicies();
 
       if (opts.json) {

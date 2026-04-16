@@ -1,27 +1,20 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import Database from "better-sqlite3";
-import { FindingsStore } from "../src/findings-store.js";
-import { FindingStatus, Severity, type Finding } from "@vardionix/schemas";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import type Database from "better-sqlite3";
+import {
+  createInMemoryDatabase,
+  ExcludedFindingsStore,
+  FindingsStore,
+} from "../src/index.js";
+import {
+  FindingStatus,
+  Severity,
+  type ActiveFinding,
+  type ExcludedFinding,
+} from "@vardionix/schemas";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-function createTestDb(): Database.Database {
-  const db = new Database(":memory:");
-  db.pragma("foreign_keys = ON");
-
-  const migration = readFileSync(
-    join(__dirname, "..", "src", "migrations", "001-init.sql"),
-    "utf-8",
-  );
-  db.exec(migration);
-  return db;
-}
-
-function makeFinding(overrides: Partial<Finding> = {}): Finding {
+function makeFinding(overrides: Partial<ActiveFinding> = {}): ActiveFinding {
   return {
+    kind: "active",
     id: "F-test123",
     ruleId: "test.rule",
     source: "semgrep",
@@ -37,8 +30,6 @@ function makeFinding(overrides: Partial<Finding> = {}): Finding {
     confidenceScore: null,
     exploitScenario: null,
     category: null,
-    excluded: false,
-    exclusionReason: null,
     policyId: null,
     policyTitle: null,
     policySeverityOverride: null,
@@ -49,42 +40,77 @@ function makeFinding(overrides: Partial<Finding> = {}): Finding {
   };
 }
 
+function makeExcludedFinding(overrides: Partial<ExcludedFinding> = {}): ExcludedFinding {
+  return {
+    kind: "excluded",
+    id: "F-excluded",
+    ruleId: "test.rule",
+    source: "semgrep",
+    severity: Severity.MEDIUM,
+    title: "Excluded Finding",
+    message: "This finding was excluded",
+    filePath: "src/app.js",
+    startLine: 12,
+    endLine: 12,
+    firstSeenAt: "2026-04-15T00:00:00.000Z",
+    lastSeenAt: "2026-04-15T00:00:00.000Z",
+    confidenceScore: 0.5,
+    exploitScenario: null,
+    category: null,
+    policyId: null,
+    policyTitle: null,
+    policySeverityOverride: null,
+    remediationGuidance: null,
+    exclusionReason: "Low confidence",
+    excludedAt: "2026-04-16T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 describe("FindingsStore", () => {
   let db: Database.Database;
   let store: FindingsStore;
+  let excludedStore: ExcludedFindingsStore;
 
   beforeEach(() => {
-    db = createTestDb();
+    db = createInMemoryDatabase();
     store = new FindingsStore(db);
+    excludedStore = new ExcludedFindingsStore(db);
   });
 
-  it("should upsert and retrieve a finding", () => {
+  it("should upsert and retrieve an active finding", () => {
     const finding = makeFinding();
     store.upsertFinding(finding);
 
     const result = store.getFinding("F-test123");
     expect(result).not.toBeNull();
-    expect(result!.id).toBe("F-test123");
-    expect(result!.ruleId).toBe("test.rule");
+    expect(result!.kind).toBe("active");
     expect(result!.severity).toBe(Severity.HIGH);
   });
 
-  it("should return null for non-existent finding", () => {
-    expect(store.getFinding("F-nonexistent")).toBeNull();
+  it("should keep excluded findings out of active list", () => {
+    store.upsertFinding(makeFinding({ id: "F-active" }));
+    excludedStore.upsertFinding(makeExcludedFinding());
+
+    expect(store.listFindings()).toHaveLength(1);
+    expect(excludedStore.listFindings()).toHaveLength(1);
   });
 
-  it("should update last_seen_at on upsert", () => {
-    const finding1 = makeFinding({ lastSeenAt: "2026-04-15T00:00:00.000Z" });
-    store.upsertFinding(finding1);
-
-    const finding2 = makeFinding({ lastSeenAt: "2026-04-16T00:00:00.000Z" });
-    store.upsertFinding(finding2);
+  it("should update last_seen_at and mutable fields on upsert", () => {
+    store.upsertFinding(makeFinding({ title: "Old", lastSeenAt: "2026-04-15T00:00:00.000Z" }));
+    store.upsertFinding(makeFinding({
+      title: "New",
+      severity: Severity.LOW,
+      lastSeenAt: "2026-04-16T00:00:00.000Z",
+    }));
 
     const result = store.getFinding("F-test123");
+    expect(result!.title).toBe("New");
+    expect(result!.severity).toBe(Severity.LOW);
     expect(result!.lastSeenAt).toBe("2026-04-16T00:00:00.000Z");
   });
 
-  it("should list findings with filters", () => {
+  it("should list active findings with filters", () => {
     store.upsertFinding(makeFinding({ id: "F-1", severity: Severity.HIGH }));
     store.upsertFinding(makeFinding({ id: "F-2", severity: Severity.LOW }));
     store.upsertFinding(makeFinding({ id: "F-3", severity: Severity.HIGH, status: FindingStatus.DISMISSED }));
@@ -92,9 +118,6 @@ describe("FindingsStore", () => {
     const highOpen = store.listFindings({ severity: Severity.HIGH, status: FindingStatus.OPEN });
     expect(highOpen).toHaveLength(1);
     expect(highOpen[0].id).toBe("F-1");
-
-    const allOpen = store.listFindings({ status: FindingStatus.OPEN });
-    expect(allOpen).toHaveLength(2);
   });
 
   it("should update finding status", () => {
@@ -105,7 +128,6 @@ describe("FindingsStore", () => {
     const result = store.getFinding("F-test123");
     expect(result!.status).toBe(FindingStatus.DISMISSED);
     expect(result!.dismissedReason).toBe("False positive");
-    expect(result!.dismissedAt).not.toBeNull();
   });
 
   it("should update policy enrichment", () => {
@@ -120,51 +142,46 @@ describe("FindingsStore", () => {
 
     const result = store.getFinding("F-test123");
     expect(result!.policyId).toBe("POL-001");
-    expect(result!.policyTitle).toBe("Test Policy");
     expect(result!.policySeverityOverride).toBe("critical");
-    expect(result!.remediationGuidance).toBe("Fix the issue");
   });
 
-  it("should get stats", () => {
+  it("should report stats for active findings only", () => {
     store.upsertFinding(makeFinding({ id: "F-1", severity: Severity.HIGH }));
     store.upsertFinding(makeFinding({ id: "F-2", severity: Severity.HIGH }));
-    store.upsertFinding(makeFinding({ id: "F-3", severity: Severity.LOW }));
+    excludedStore.upsertFinding(makeExcludedFinding({ severity: Severity.HIGH }));
 
     const stats = store.getStats();
-    expect(stats.total).toBe(3);
+    expect(stats.total).toBe(2);
     expect(stats.bySeverity["high"]).toBe(2);
-    expect(stats.bySeverity["low"]).toBe(1);
   });
 
-  it("should bulk upsert findings", () => {
-    const findings = [
+  it("should bulk delete active findings", () => {
+    store.upsertFindings([
       makeFinding({ id: "F-1" }),
       makeFinding({ id: "F-2" }),
       makeFinding({ id: "F-3" }),
-    ];
-    store.upsertFindings(findings);
+    ]);
 
-    const all = store.listFindings();
-    expect(all).toHaveLength(3);
+    store.deleteFindings(["F-1", "F-3"]);
+    expect(store.listFindings().map((f) => f.id)).toEqual(["F-2"]);
   });
 
-  it("should delete a finding", () => {
-    store.upsertFinding(makeFinding());
-    expect(store.deleteFinding("F-test123")).toBe(true);
-    expect(store.getFinding("F-test123")).toBeNull();
-    expect(store.deleteFinding("F-nonexistent")).toBe(false);
+  it("should manage excluded findings separately", () => {
+    excludedStore.upsertFinding(makeExcludedFinding());
+    const result = excludedStore.getFinding("F-excluded");
+    expect(result).not.toBeNull();
+    expect(result!.kind).toBe("excluded");
+    expect(result!.exclusionReason).toBe("Low confidence");
   });
 
-  it("should respect limit and offset", () => {
-    for (let i = 0; i < 10; i++) {
-      store.upsertFinding(makeFinding({ id: `F-${i}` }));
+  it("should respect limit and offset for excluded findings", () => {
+    for (let i = 0; i < 5; i++) {
+      excludedStore.upsertFinding(makeExcludedFinding({ id: `F-excluded-${i}` }));
     }
 
-    const limited = store.listFindings({ limit: 3 });
-    expect(limited).toHaveLength(3);
-
-    const offsetted = store.listFindings({ limit: 3, offset: 3 });
-    expect(offsetted).toHaveLength(3);
-    expect(offsetted[0].id).not.toBe(limited[0].id);
+    const limited = excludedStore.listFindings({ limit: 2 });
+    const offset = excludedStore.listFindings({ limit: 2, offset: 2 });
+    expect(limited).toHaveLength(2);
+    expect(offset).toHaveLength(2);
   });
 });

@@ -10,7 +10,14 @@ export function createExplainCommand(explainService: ExplainService): Command {
     .option("--agent <agent>", "Agent format (claude, codex)", "claude")
     .option("--json", "Output as JSON")
     .action((findingId, opts) => {
-      const explanation = explainService.explain(findingId);
+      let explanation;
+      try {
+        explanation = explainService.explain(findingId);
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
+        return;
+      }
 
       if (!explanation) {
         console.error(`Finding '${findingId}' not found.`);

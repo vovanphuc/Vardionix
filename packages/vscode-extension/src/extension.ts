@@ -3,6 +3,7 @@ import { runVardionix } from "./runner";
 import {
   createDiagnosticCollection,
   updateDiagnostics,
+  type ExcludedFinding,
   type Finding,
 } from "./diagnostics";
 import { FindingsTreeProvider } from "./findings-tree";
@@ -28,6 +29,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("vardionix.scanStagedFiles", scanStagedFiles),
     vscode.commands.registerCommand("vardionix.scanWorkspace", scanWorkspace),
     vscode.commands.registerCommand("vardionix.listFindings", listFindings),
+    vscode.commands.registerCommand("vardionix.listExcludedFindings", listExcludedFindings),
     vscode.commands.registerCommand("vardionix.explainFinding", explainFinding),
     vscode.commands.registerCommand("vardionix.dismissFinding", dismissFinding),
     vscode.commands.registerCommand("vardionix.showPolicy", showPolicy),
@@ -83,14 +85,14 @@ async function scanFile(filePath: string): Promise<void> {
 
       const scanResult = result.data as {
         totalFindings: number;
-        findingIds: string[];
+        totalExcluded: number;
       };
 
       // Fetch full finding details
       await loadAndDisplayFindings(cwd);
 
       vscode.window.showInformationMessage(
-        `Vardionix: Found ${scanResult.totalFindings} finding(s)`,
+        `Vardionix: Found ${scanResult.totalFindings} finding(s), excluded ${scanResult.totalExcluded}`,
       );
     },
   );
@@ -116,11 +118,11 @@ async function scanStagedFiles(): Promise<void> {
         return;
       }
 
-      const scanResult = result.data as { totalFindings: number };
+      const scanResult = result.data as { totalFindings: number; totalExcluded: number };
       await loadAndDisplayFindings(cwd);
 
       vscode.window.showInformationMessage(
-        `Vardionix: Found ${scanResult.totalFindings} finding(s) in staged files`,
+        `Vardionix: Found ${scanResult.totalFindings} finding(s), excluded ${scanResult.totalExcluded} in staged files`,
       );
     },
   );
@@ -146,11 +148,11 @@ async function scanWorkspace(): Promise<void> {
         return;
       }
 
-      const scanResult = result.data as { totalFindings: number };
+      const scanResult = result.data as { totalFindings: number; totalExcluded: number };
       await loadAndDisplayFindings(cwd);
 
       vscode.window.showInformationMessage(
-        `Vardionix: Found ${scanResult.totalFindings} finding(s) in workspace`,
+        `Vardionix: Found ${scanResult.totalFindings} finding(s), excluded ${scanResult.totalExcluded} in workspace`,
       );
     },
   );
@@ -161,6 +163,43 @@ async function listFindings(): Promise<void> {
   if (!cwd) return;
 
   await loadAndDisplayFindings(cwd);
+}
+
+async function listExcludedFindings(): Promise<void> {
+  const cwd = getWorkspaceCwd();
+  if (!cwd) return;
+
+  const result = await runVardionix(["findings", "list", "--excluded"], cwd);
+  if (!result.success) {
+    vscode.window.showErrorMessage(`Failed to list excluded findings: ${result.error}`);
+    return;
+  }
+
+  const findings = result.data as ExcludedFinding[];
+  if (findings.length === 0) {
+    vscode.window.showInformationMessage("No excluded findings.");
+    return;
+  }
+
+  const picked = await vscode.window.showQuickPick(
+    findings.map((f) => ({
+      label: `${f.id} - ${f.title}`,
+      description: `${f.policySeverityOverride ?? f.severity} | ${f.filePath}:${f.startLine}`,
+      detail: f.exclusionReason,
+      finding: f,
+    })),
+    { placeHolder: "Excluded findings" },
+  );
+
+  if (!picked) return;
+
+  const panel = vscode.window.createWebviewPanel(
+    "vardionixExcludedFinding",
+    `Excluded: ${picked.finding.id}`,
+    vscode.ViewColumn.Beside,
+    {},
+  );
+  panel.webview.html = buildExcludedFindingHtml(picked.finding);
 }
 
 async function refreshFindings(): Promise<void> {
@@ -443,6 +482,29 @@ function buildPolicyHtml(policy: {
   <ul>
     ${refLinks || "<li>No references</li>"}
   </ul>
+</body>
+</html>`;
+}
+
+function buildExcludedFindingHtml(finding: ExcludedFinding): string {
+  const severity = (finding.policySeverityOverride ?? finding.severity).toUpperCase();
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: var(--vscode-font-family, sans-serif); padding: 20px; color: var(--vscode-foreground, #ccc); background: var(--vscode-editor-background, #1e1e1e); }
+    h1 { font-size: 1.4em; }
+    .meta { color: var(--vscode-descriptionForeground, #999); }
+    pre { background: var(--vscode-textCodeBlock-background, #2d2d2d); padding: 12px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(finding.title)}</h1>
+  <p class="meta">${escapeHtml(finding.id)} · ${escapeHtml(severity)} · ${escapeHtml(finding.filePath)}:${finding.startLine}</p>
+  <h2>Exclusion Reason</h2>
+  <pre>${escapeHtml(finding.exclusionReason)}</pre>
 </body>
 </html>`;
 }

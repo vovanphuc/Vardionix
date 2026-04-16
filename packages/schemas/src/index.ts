@@ -1,10 +1,20 @@
-export { Severity, FindingStatus, ScanScope, JobStatus } from "./enums.js";
-export { FindingSchema, type Finding } from "./finding.js";
+export { Severity, FindingStatus, ScanScope } from "./enums.js";
+export {
+  BaseFindingSchema,
+  ActiveFindingSchema,
+  ExcludedFindingSchema,
+  FindingSchema,
+  type BaseFinding,
+  type ActiveFinding,
+  type ExcludedFinding,
+  type Finding,
+} from "./finding.js";
 export { PolicySchema, type Policy } from "./policy.js";
-export { JobSchema, type Job } from "./job.js";
 export {
   ScanRequestSchema,
+  ScanSummarySchema,
   ScanResultSchema,
   type ScanRequest,
+  type ScanSummary,
   type ScanResult,
 } from "./scan-request.js";

@@ -10,7 +10,14 @@ export function createPatchCommand(patchService: PatchService): Command {
     .option("--agent <agent>", "Agent to use (codex, claude)", "codex")
     .option("--json", "Output as JSON")
     .action((findingId, opts) => {
-      const context = patchService.generatePatchContext(findingId);
+      let context;
+      try {
+        context = patchService.generatePatchContext(findingId);
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
+        return;
+      }
 
       if (!context) {
         console.error(`Finding '${findingId}' not found.`);

@@ -1,5 +1,5 @@
-import type { Finding } from "@vardionix/schemas";
-import type { FindingsStore } from "@vardionix/store";
+import type { ActiveFinding } from "@vardionix/schemas";
+import type { ExcludedFindingsStore, FindingsStore } from "@vardionix/store";
 
 export interface FindingExplanation {
   findingId: string;
@@ -23,16 +23,27 @@ export interface FindingExplanation {
 }
 
 export class ExplainService {
-  constructor(private findingsStore: FindingsStore) {}
+  constructor(
+    private findingsStore: FindingsStore,
+    private excludedFindingsStore: ExcludedFindingsStore,
+  ) {}
 
   explain(findingId: string): FindingExplanation | null {
     const finding = this.findingsStore.getFinding(findingId);
-    if (!finding) return null;
+    if (!finding) {
+      const excluded = this.excludedFindingsStore.getFinding(findingId);
+      if (excluded) {
+        throw new Error(
+          `Finding '${findingId}' is excluded and cannot be explained: ${excluded.exclusionReason}`,
+        );
+      }
+      return null;
+    }
 
     return this.buildExplanation(finding);
   }
 
-  private buildExplanation(finding: Finding): FindingExplanation {
+  private buildExplanation(finding: ActiveFinding): FindingExplanation {
     const effectiveSeverity =
       finding.policySeverityOverride ?? finding.severity;
 
@@ -66,14 +77,14 @@ export class ExplainService {
     return explanation;
   }
 
-  private generateWhyItMatters(finding: Finding): string {
+  private generateWhyItMatters(finding: ActiveFinding): string {
     if (finding.remediationGuidance) {
       return finding.message + " " + finding.remediationGuidance;
     }
     return finding.message;
   }
 
-  private generateWhatToChange(finding: Finding): string[] {
+  private generateWhatToChange(finding: ActiveFinding): string[] {
     const changes: string[] = [];
 
     if (finding.remediationGuidance) {
@@ -97,7 +108,7 @@ export class ExplainService {
     return changes;
   }
 
-  private generateSafeExample(finding: Finding): string {
+  private generateSafeExample(finding: ActiveFinding): string {
     // For MVP, provide a generic safe coding guidance based on the rule pattern
     const ruleSegments = finding.ruleId.split(".");
     const lastSegment = ruleSegments[ruleSegments.length - 1];

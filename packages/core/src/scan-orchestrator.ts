@@ -3,12 +3,12 @@ import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 import {
   type ScanRequest,
-  type ScanResult,
-  type Finding,
+  type ScanSummary,
+  type ActiveFinding,
   ScanScope,
   Severity,
 } from "@vardionix/schemas";
-import { FindingsStore } from "@vardionix/store";
+import { ExcludedFindingsStore, FindingsStore } from "@vardionix/store";
 import {
   SemgrepRunner,
   parseSemgrepOutput,
@@ -18,119 +18,10 @@ import {
   filterFindings,
 } from "@vardionix/adapters";
 import type { VardionixConfig } from "./config.js";
-import { resolvePolicyDirectories, resolveRuleset } from "./config.js";
+import { resolveRuleset } from "./config.js";
 
-export class ScanOrchestrator {
-  private semgrepRunner: SemgrepRunner;
-  private policyStore: PolicyLocalStore;
-  private policyEnricher: PolicyEnricher;
-
-  constructor(
-    private config: VardionixConfig,
-    private findingsStore: FindingsStore,
-  ) {
-    this.semgrepRunner = new SemgrepRunner({
-      semgrepPath: config.semgrep.path,
-      timeout: config.semgrep.timeout * 1000,
-    });
-
-    const policyDirs = resolvePolicyDirectories(config);
-    this.policyStore = new PolicyLocalStore(policyDirs);
-    this.policyStore.load();
-    this.policyEnricher = new PolicyEnricher(this.policyStore);
-  }
-
-  async scan(request: ScanRequest): Promise<ScanResult> {
-    const startedAt = new Date().toISOString();
-    const scanId = `S-${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 8)}-${randomUUID().slice(0, 6)}`;
-
-    // Resolve targets based on scope
-    const targets = this.resolveTargets(request);
-    const target = targets.join(", ") || request.target || ".";
-
-    // Run semgrep
-    const semgrepOutput = await this.semgrepRunner.scan({
-      targets,
-      ruleset: resolveRuleset(request.ruleset ?? this.config.semgrep.defaultRuleset),
-    });
-
-    // Parse and normalize
-    const parsed = parseSemgrepOutput(semgrepOutput);
-    let findings = normalizeFindings(parsed);
-
-    // Apply severity filter if specified
-    if (request.severityFilter && request.severityFilter.length > 0) {
-      findings = findings.filter((f) =>
-        request.severityFilter!.includes(f.severity),
-      );
-    }
-
-    // Enrich with policy data
-    findings = this.policyEnricher.enrichFindings(findings);
-
-    // Apply two-stage false-positive filtering (from claude-code-security-review)
-    const filterResult = filterFindings(findings, {
-      confidenceThreshold: 0.8,
-    });
-    findings = filterResult.kept;
-
-    // Persist both kept and excluded findings
-    this.findingsStore.upsertFindings(findings);
-    this.findingsStore.upsertFindings(filterResult.excluded);
-
-    // Compute stats
-    const findingsBySeverity = this.computeSeverityStats(findings);
-
-    const completedAt = new Date().toISOString();
-
-    return {
-      scanId,
-      startedAt,
-      completedAt,
-      target,
-      scope: request.scope,
-      totalFindings: findings.length,
-      findingsBySeverity,
-      findingIds: findings.map((f) => f.id),
-    };
-  }
-
-  enrichFindings(findingIds?: string[]): Finding[] {
-    // Reload policies
-    this.policyStore.load();
-
-    let findings: Finding[];
-    if (findingIds && findingIds.length > 0) {
-      findings = findingIds
-        .map((id) => this.findingsStore.getFinding(id))
-        .filter((f): f is Finding => f !== null);
-    } else {
-      findings = this.findingsStore.listFindings({ status: "open" as Finding["status"] });
-    }
-
-    const enriched = this.policyEnricher.enrichFindings(findings);
-
-    // Update store with enrichment data
-    for (const finding of enriched) {
-      if (finding.policyId) {
-        this.findingsStore.updatePolicyEnrichment(
-          finding.id,
-          finding.policyId,
-          finding.policyTitle ?? "",
-          finding.policySeverityOverride,
-          finding.remediationGuidance ?? "",
-        );
-      }
-    }
-
-    return enriched;
-  }
-
-  getPolicyStore(): PolicyLocalStore {
-    return this.policyStore;
-  }
-
-  private resolveTargets(request: ScanRequest): string[] {
+class TargetResolver {
+  resolveTargets(request: ScanRequest): string[] {
     switch (request.scope) {
       case ScanScope.FILE:
         if (!request.target) throw new Error("Target file path is required for file scope");
@@ -177,9 +68,142 @@ export class ScanOrchestrator {
       return process.cwd();
     }
   }
+}
+
+class SemgrepScanService {
+  private readonly semgrepRunner: SemgrepRunner;
+
+  constructor(config: VardionixConfig) {
+    this.semgrepRunner = new SemgrepRunner({
+      semgrepPath: config.semgrep.path,
+      timeout: config.semgrep.timeout * 1000,
+    });
+  }
+
+  async scan(request: ScanRequest, targets: string[], defaultRuleset: string): Promise<ActiveFinding[]> {
+    const semgrepOutput = await this.semgrepRunner.scan({
+      targets,
+      ruleset: resolveRuleset(request.ruleset ?? defaultRuleset),
+    });
+
+    const parsed = parseSemgrepOutput(semgrepOutput);
+    let findings = normalizeFindings(parsed);
+
+    if (request.severityFilter && request.severityFilter.length > 0) {
+      findings = findings.filter((f) => request.severityFilter!.includes(f.severity));
+    }
+
+    return findings;
+  }
+}
+
+class FindingEnrichmentService {
+  constructor(private readonly policyEnricher: PolicyEnricher) {}
+
+  enrich(findings: ActiveFinding[]): ActiveFinding[] {
+    return this.policyEnricher.enrichFindings(findings);
+  }
+}
+
+class FindingFilterService {
+  filter(findings: ActiveFinding[]) {
+    return filterFindings(findings, {
+      confidenceThreshold: 0.8,
+    });
+  }
+}
+
+export class ScanService {
+  private readonly targetResolver = new TargetResolver();
+  private readonly semgrepScanService: SemgrepScanService;
+  private readonly enrichmentService: FindingEnrichmentService;
+  private readonly filterService = new FindingFilterService();
+
+  constructor(
+    private config: VardionixConfig,
+    private findingsStore: FindingsStore,
+    private excludedFindingsStore: ExcludedFindingsStore,
+    private policyStore: PolicyLocalStore,
+    policyEnricher: PolicyEnricher,
+  ) {
+    this.semgrepScanService = new SemgrepScanService(config);
+    this.enrichmentService = new FindingEnrichmentService(policyEnricher);
+  }
+
+  async scan(request: ScanRequest): Promise<ScanSummary> {
+    const startedAt = new Date().toISOString();
+    const scanId = `S-${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 8)}-${randomUUID().slice(0, 6)}`;
+
+    const targets = this.targetResolver.resolveTargets(request);
+    const target = targets.join(", ") || request.target || ".";
+    const normalized = await this.semgrepScanService.scan(
+      request,
+      targets,
+      this.config.semgrep.defaultRuleset,
+    );
+    const enriched = this.enrichmentService.enrich(normalized);
+    const filterResult = this.filterService.filter(enriched);
+
+    this.findingsStore.upsertFindings(filterResult.kept);
+    this.excludedFindingsStore.upsertFindings(filterResult.excluded);
+    this.findingsStore.deleteFindings(filterResult.excluded.map((f) => f.id));
+    this.excludedFindingsStore.deleteFindings(filterResult.kept.map((f) => f.id));
+
+    const findingsBySeverity = this.computeSeverityStats(filterResult.kept);
+
+    const completedAt = new Date().toISOString();
+
+    return {
+      scanId,
+      startedAt,
+      completedAt,
+      target,
+      scope: request.scope,
+      totalFindings: filterResult.kept.length,
+      totalExcluded: filterResult.excluded.length,
+      findingsBySeverity,
+      excludedByReason: filterResult.stats.byExclusionReason,
+      findingIds: filterResult.kept.map((f) => f.id),
+      excludedFindingIds: filterResult.excluded.map((f) => f.id),
+    };
+  }
+
+  enrichFindings(findingIds?: string[]): ActiveFinding[] {
+    this.policyStore.load();
+
+    let findings: ActiveFinding[];
+    if (findingIds && findingIds.length > 0) {
+      findings = findingIds
+        .map((id) => this.findingsStore.getFinding(id))
+        .filter((f): f is ActiveFinding => f !== null);
+    } else {
+      findings = this.findingsStore.listFindings({ status: "open" as ActiveFinding["status"] });
+    }
+
+    const enriched = this.enrichmentService.enrich(findings);
+
+    // Update store with enrichment data
+    for (const finding of enriched) {
+      if (finding.policyId) {
+        this.findingsStore.updatePolicyEnrichment(
+          finding.id,
+          finding.policyId,
+          finding.policyTitle ?? "",
+          finding.policySeverityOverride,
+          finding.remediationGuidance ?? "",
+        );
+      }
+    }
+
+    return enriched;
+  }
+
+  getPolicyStore(): PolicyLocalStore {
+    return this.policyStore;
+  }
 
   private computeSeverityStats(
-    findings: Finding[],
+    findings: ActiveFinding[],
   ): Record<Severity, number> {
     const stats: Record<string, number> = {};
     for (const severity of Object.values(Severity)) {

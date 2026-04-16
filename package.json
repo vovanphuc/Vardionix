@@ -6,10 +6,11 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
+    "build": "npm run typecheck && npm run build:workspaces",
+    "build:workspaces": "npm run build --workspaces",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --build",
+    "typecheck": "tsc --build --force",
     "clean": "rm -rf packages/*/dist"
   },
   "devDependencies": {

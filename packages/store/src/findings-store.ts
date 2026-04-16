@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { Finding, FindingStatus, Severity } from "@vardionix/schemas";
+import type { ActiveFinding, FindingStatus, Severity } from "@vardionix/schemas";
 
 export interface FindingFilters {
   status?: FindingStatus;
@@ -16,13 +16,14 @@ export interface FindingStats {
   byStatus: Record<string, number>;
 }
 
-function rowToFinding(row: Record<string, unknown>): Finding {
+function rowToFinding(row: Record<string, unknown>): ActiveFinding {
   return {
+    kind: "active",
     id: row.id as string,
     ruleId: row.rule_id as string,
     source: row.source as string,
-    severity: row.severity as Finding["severity"],
-    status: row.status as Finding["status"],
+    severity: row.severity as ActiveFinding["severity"],
+    status: row.status as ActiveFinding["status"],
     title: row.title as string,
     message: row.message as string,
     filePath: row.file_path as string,
@@ -34,12 +35,10 @@ function rowToFinding(row: Record<string, unknown>): Finding {
     metadata: row.metadata ? JSON.parse(row.metadata as string) : undefined,
     confidenceScore: row.confidence_score as number | null,
     exploitScenario: row.exploit_scenario as string | null,
-    category: row.category as Finding["category"],
-    excluded: (row.excluded as number) === 1,
-    exclusionReason: row.exclusion_reason as string | null,
+    category: row.category as ActiveFinding["category"],
     policyId: row.policy_id as string | null,
     policyTitle: row.policy_title as string | null,
-    policySeverityOverride: row.policy_severity_override as Finding["policySeverityOverride"],
+    policySeverityOverride: row.policy_severity_override as ActiveFinding["policySeverityOverride"],
     remediationGuidance: row.remediation_guidance as string | null,
     firstSeenAt: row.first_seen_at as string,
     lastSeenAt: row.last_seen_at as string,
@@ -51,13 +50,13 @@ function rowToFinding(row: Record<string, unknown>): Finding {
 export class FindingsStore {
   constructor(private db: Database.Database) {}
 
-  upsertFinding(finding: Finding): void {
+  upsertFinding(finding: ActiveFinding): void {
     const stmt = this.db.prepare(`
       INSERT INTO findings (
         id, rule_id, source, severity, status, title, message,
         file_path, start_line, end_line, start_col, end_col,
         code_snippet, metadata,
-        confidence_score, exploit_scenario, category, excluded, exclusion_reason,
+        confidence_score, exploit_scenario, category,
         policy_id, policy_title,
         policy_severity_override, remediation_guidance,
         first_seen_at, last_seen_at, dismissed_at, dismissed_reason
@@ -65,7 +64,7 @@ export class FindingsStore {
         @id, @ruleId, @source, @severity, @status, @title, @message,
         @filePath, @startLine, @endLine, @startCol, @endCol,
         @codeSnippet, @metadata,
-        @confidenceScore, @exploitScenario, @category, @excluded, @exclusionReason,
+        @confidenceScore, @exploitScenario, @category,
         @policyId, @policyTitle,
         @policySeverityOverride, @remediationGuidance,
         @firstSeenAt, @lastSeenAt, @dismissedAt, @dismissedReason
@@ -81,6 +80,14 @@ export class FindingsStore {
         end_col = excluded.end_col,
         code_snippet = excluded.code_snippet,
         metadata = excluded.metadata,
+        confidence_score = excluded.confidence_score,
+        exploit_scenario = excluded.exploit_scenario,
+        category = excluded.category,
+        status = excluded.status,
+        policy_id = excluded.policy_id,
+        policy_title = excluded.policy_title,
+        policy_severity_override = excluded.policy_severity_override,
+        remediation_guidance = excluded.remediation_guidance,
         last_seen_at = excluded.last_seen_at
     `);
 
@@ -102,8 +109,6 @@ export class FindingsStore {
       confidenceScore: finding.confidenceScore,
       exploitScenario: finding.exploitScenario,
       category: finding.category,
-      excluded: finding.excluded ? 1 : 0,
-      exclusionReason: finding.exclusionReason,
       policyId: finding.policyId,
       policyTitle: finding.policyTitle,
       policySeverityOverride: finding.policySeverityOverride,
@@ -115,8 +120,8 @@ export class FindingsStore {
     });
   }
 
-  upsertFindings(findings: Finding[]): void {
-    const transaction = this.db.transaction((items: Finding[]) => {
+  upsertFindings(findings: ActiveFinding[]): void {
+    const transaction = this.db.transaction((items: ActiveFinding[]) => {
       for (const finding of items) {
         this.upsertFinding(finding);
       }
@@ -124,15 +129,17 @@ export class FindingsStore {
     transaction(findings);
   }
 
-  getFinding(id: string): Finding | null {
-    const row = this.db.prepare("SELECT * FROM findings WHERE id = ?").get(id) as
+  getFinding(id: string): ActiveFinding | null {
+    const row = this.db.prepare(
+      "SELECT * FROM findings WHERE id = ? AND COALESCE(excluded, 0) = 0",
+    ).get(id) as
       | Record<string, unknown>
       | undefined;
     return row ? rowToFinding(row) : null;
   }
 
-  listFindings(filters: FindingFilters = {}): Finding[] {
-    const conditions: string[] = [];
+  listFindings(filters: FindingFilters = {}): ActiveFinding[] {
+    const conditions = ["COALESCE(excluded, 0) = 0"];
     const params: Record<string, unknown> = {};
 
     if (filters.status) {
@@ -177,13 +184,15 @@ export class FindingsStore {
 
     if (status === "dismissed") {
       stmt = this.db.prepare(
-        "UPDATE findings SET status = ?, dismissed_at = ?, dismissed_reason = ? WHERE id = ?",
+        "UPDATE findings SET status = ?, dismissed_at = ?, dismissed_reason = ? WHERE id = ? AND COALESCE(excluded, 0) = 0",
       );
       const result = stmt.run(status, now, reason ?? null, id);
       return result.changes > 0;
     }
 
-    stmt = this.db.prepare("UPDATE findings SET status = ? WHERE id = ?");
+    stmt = this.db.prepare(
+      "UPDATE findings SET status = ?, dismissed_at = NULL, dismissed_reason = NULL WHERE id = ? AND COALESCE(excluded, 0) = 0",
+    );
     const result = stmt.run(status, id);
     return result.changes > 0;
   }
@@ -201,7 +210,7 @@ export class FindingsStore {
         policy_title = ?,
         policy_severity_override = ?,
         remediation_guidance = ?
-      WHERE id = ?
+      WHERE id = ? AND COALESCE(excluded, 0) = 0
     `);
     const result = stmt.run(policyId, policyTitle, severityOverride, remediationGuidance, id);
     return result.changes > 0;
@@ -209,12 +218,12 @@ export class FindingsStore {
 
   getStats(): FindingStats {
     const total = (
-      this.db.prepare("SELECT COUNT(*) as count FROM findings").get() as { count: number }
+      this.db.prepare("SELECT COUNT(*) as count FROM findings WHERE COALESCE(excluded, 0) = 0").get() as { count: number }
     ).count;
 
     const bySeverity: Record<string, number> = {};
     const sevRows = this.db
-      .prepare("SELECT severity, COUNT(*) as count FROM findings GROUP BY severity")
+      .prepare("SELECT severity, COUNT(*) as count FROM findings WHERE COALESCE(excluded, 0) = 0 GROUP BY severity")
       .all() as { severity: string; count: number }[];
     for (const row of sevRows) {
       bySeverity[row.severity] = row.count;
@@ -222,7 +231,7 @@ export class FindingsStore {
 
     const byStatus: Record<string, number> = {};
     const statRows = this.db
-      .prepare("SELECT status, COUNT(*) as count FROM findings GROUP BY status")
+      .prepare("SELECT status, COUNT(*) as count FROM findings WHERE COALESCE(excluded, 0) = 0 GROUP BY status")
       .all() as { severity: string; count: number }[];
     for (const row of statRows) {
       byStatus[(row as unknown as { status: string }).status] = row.count;
@@ -232,7 +241,23 @@ export class FindingsStore {
   }
 
   deleteFinding(id: string): boolean {
-    const result = this.db.prepare("DELETE FROM findings WHERE id = ?").run(id);
+    const result = this.db
+      .prepare("DELETE FROM findings WHERE id = ? AND COALESCE(excluded, 0) = 0")
+      .run(id);
     return result.changes > 0;
+  }
+
+  deleteFindings(ids: string[]): void {
+    if (ids.length === 0) return;
+
+    const stmt = this.db.prepare(
+      "DELETE FROM findings WHERE id = ? AND COALESCE(excluded, 0) = 0",
+    );
+    const transaction = this.db.transaction((items: string[]) => {
+      for (const id of items) {
+        stmt.run(id);
+      }
+    });
+    transaction(ids);
   }
 }

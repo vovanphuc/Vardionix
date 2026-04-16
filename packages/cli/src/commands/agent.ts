@@ -1,12 +1,12 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { ScanScope } from "@vardionix/schemas";
-import type { ScanOrchestrator, ExplainService, PatchService } from "@vardionix/core";
+import type { ScanService, ExplainService, PatchService } from "@vardionix/core";
 import type { FindingsStore } from "@vardionix/store";
 import { formatJson } from "../formatters/json.js";
 
 export function createAgentCommand(
-  orchestrator: ScanOrchestrator,
+  scanService: ScanService,
   findingsStore: FindingsStore,
   explainService: ExplainService,
   patchService: PatchService,
@@ -24,8 +24,7 @@ export function createAgentCommand(
     .option("--json", "Output as JSON")
     .action(async (opts) => {
       try {
-        // Step 1: Scan
-        const result = await orchestrator.scan({
+        const result = await scanService.scan({
           scope: opts.scope as ScanScope,
           target: opts.target,
           ruleset: "auto",
@@ -49,6 +48,9 @@ export function createAgentCommand(
 
         console.log(chalk.bold(`\nTriage Report (${result.totalFindings} findings)`));
         console.log(chalk.gray(`Scan: ${result.scanId}\n`));
+        if (result.totalExcluded > 0) {
+          console.log(chalk.gray(`Excluded during filtering: ${result.totalExcluded}\n`));
+        }
 
         for (const exp of explanations) {
           console.log(chalk.bold(`  ${exp.findingId} - ${exp.title}`));
@@ -82,7 +84,16 @@ export function createAgentCommand(
     .description("Generate a fix for a finding using Codex-optimized workflow")
     .option("--json", "Output as JSON")
     .action((findingId, opts) => {
-      const context = patchService.generatePatchContext(findingId);
+      let context;
+      try {
+        context = patchService.generatePatchContext(findingId);
+      } catch (error) {
+        console.error(
+          `${error instanceof Error ? error.message : String(error)}`,
+        );
+        process.exitCode = 1;
+        return;
+      }
 
       if (!context) {
         console.error(`Finding '${findingId}' not found.`);

@@ -10,15 +10,23 @@ export const ScanRequestSchema = z.object({
 
 export type ScanRequest = z.infer<typeof ScanRequestSchema>;
 
-export const ScanResultSchema = z.object({
+const SeverityCountsSchema = z.record(z.nativeEnum(Severity), z.number().int());
+
+export const ScanSummarySchema = z.object({
   scanId: z.string(),
   startedAt: z.string().datetime(),
   completedAt: z.string().datetime(),
   target: z.string(),
   scope: z.nativeEnum(ScanScope),
   totalFindings: z.number().int(),
-  findingsBySeverity: z.record(z.nativeEnum(Severity), z.number().int()),
+  totalExcluded: z.number().int(),
+  findingsBySeverity: SeverityCountsSchema,
+  excludedByReason: z.record(z.string(), z.number().int()),
   findingIds: z.array(z.string()),
+  excludedFindingIds: z.array(z.string()),
 });
 
-export type ScanResult = z.infer<typeof ScanResultSchema>;
+export const ScanResultSchema = ScanSummarySchema;
+
+export type ScanSummary = z.infer<typeof ScanSummarySchema>;
+export type ScanResult = ScanSummary;

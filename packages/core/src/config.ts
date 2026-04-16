@@ -12,10 +12,6 @@ export interface VardionixConfig {
   policy: {
     directories: string[];
   };
-  backendai: {
-    endpoint: string;
-    apiKey: string;
-  };
   output: {
     defaultFormat: "table" | "json" | "sarif";
     color: boolean;
@@ -30,10 +26,6 @@ const DEFAULT_CONFIG: VardionixConfig = {
   },
   policy: {
     directories: ["built-in"],
-  },
-  backendai: {
-    endpoint: "",
-    apiKey: "",
   },
   output: {
     defaultFormat: "table",
@@ -102,7 +94,6 @@ export function loadConfig(configPath?: string): VardionixConfig {
     return {
       semgrep: { ...DEFAULT_CONFIG.semgrep, ...parsed.semgrep },
       policy: { ...DEFAULT_CONFIG.policy, ...parsed.policy },
-      backendai: { ...DEFAULT_CONFIG.backendai, ...parsed.backendai },
       output: { ...DEFAULT_CONFIG.output, ...parsed.output },
     };
   } catch {

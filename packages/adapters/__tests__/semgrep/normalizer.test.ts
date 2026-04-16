@@ -44,6 +44,7 @@ describe("normalizeFindings", () => {
     expect(findings).toHaveLength(1);
 
     const f = findings[0];
+    expect(f.kind).toBe("active");
     expect(f.id).toMatch(/^F-/);
     expect(f.ruleId).toBe("javascript.lang.security.audit.xss");
     expect(f.source).toBe("semgrep");
@@ -52,6 +53,7 @@ describe("normalizeFindings", () => {
     expect(f.filePath).toBe("src/app.js");
     expect(f.startLine).toBe(42);
     expect(f.codeSnippet).toBe("element.innerHTML = data;");
+    expect(f.confidenceScore).toBeNull();
     expect(f.policyId).toBeNull();
   });
 
@@ -99,5 +101,23 @@ describe("normalizeFindings", () => {
       ]);
       expect(findings[0].severity).toBe(expected[i]);
     }
+  });
+
+  it("should preserve null confidence when metadata does not provide it", () => {
+    const findings = normalizeFindings([
+      {
+        checkId: "test.rule",
+        filePath: "test.js",
+        startLine: 1,
+        endLine: 1,
+        startCol: 1,
+        endCol: 1,
+        message: "Test",
+        severity: "high",
+        metadata: {},
+      },
+    ]);
+
+    expect(findings[0].confidenceScore).toBeNull();
   });
 });

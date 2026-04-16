@@ -19,10 +19,3 @@ export enum ScanScope {
   STAGED = "staged",
   WORKSPACE = "workspace",
 }
-
-export enum JobStatus {
-  PENDING = "pending",
-  RUNNING = "running",
-  COMPLETED = "completed",
-  FAILED = "failed",
-}

@@ -25,14 +25,3 @@ export {
   applyConfidenceThreshold,
   type FilterResult,
 } from "./filter/index.js";
-
-// Backend.AI adapter
-export {
-  BackendAIClient,
-  ALLOWED_TEMPLATES,
-  getTemplate,
-  isTemplateAllowed,
-  type JobTemplate,
-  type SubmitJobRequest,
-  type JobResult,
-} from "./backendai/index.js";

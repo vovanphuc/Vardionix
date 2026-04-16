@@ -1,11 +1,11 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ScanScope } from "@vardionix/schemas";
-import type { ScanOrchestrator } from "@vardionix/core";
+import { ScanScope, type Severity } from "@vardionix/schemas";
+import type { ScanService } from "@vardionix/core";
 
 export function registerSemgrepScan(
   server: McpServer,
-  orchestrator: ScanOrchestrator,
+  scanService: ScanService,
 ): void {
   server.tool(
     "semgrep_scan",
@@ -30,10 +30,10 @@ export function registerSemgrepScan(
     async (args) => {
       try {
         const severityFilter = args.severityFilter
-          ? (args.severityFilter.split(",").map((s) => s.trim()) as ScanScope[])
+          ? (args.severityFilter.split(",").map((s) => s.trim()) as Severity[])
           : undefined;
 
-        const result = await orchestrator.scan({
+        const result = await scanService.scan({
           scope: args.scope as ScanScope,
           target: args.target,
           ruleset: args.ruleset ?? "auto",

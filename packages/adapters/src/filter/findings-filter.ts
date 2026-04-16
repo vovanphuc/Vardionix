@@ -1,4 +1,4 @@
-import type { Finding } from "@vardionix/schemas";
+import type { ActiveFinding, ExcludedFinding } from "@vardionix/schemas";
 
 /**
  * Two-stage false-positive filtering inspired by anthropics/claude-code-security-review.
@@ -8,8 +8,8 @@ import type { Finding } from "@vardionix/schemas";
  */
 
 export interface FilterResult {
-  kept: Finding[];
-  excluded: Finding[];
+  kept: ActiveFinding[];
+  excluded: ExcludedFinding[];
   stats: {
     total: number;
     kept: number;
@@ -98,7 +98,7 @@ const HARD_EXCLUSION_RULES: ExclusionRule[] = [
 ];
 
 function matchesExclusionRule(
-  finding: Finding,
+  finding: ActiveFinding,
   rule: ExclusionRule,
 ): boolean {
   const messageMatch = rule.patterns.some(
@@ -115,12 +115,45 @@ function matchesExclusionRule(
   return true;
 }
 
+function toExcludedFinding(
+  finding: ActiveFinding,
+  exclusionReason: string,
+): ExcludedFinding {
+  return {
+    kind: "excluded",
+    id: finding.id,
+    ruleId: finding.ruleId,
+    source: finding.source,
+    severity: finding.severity,
+    title: finding.title,
+    message: finding.message,
+    filePath: finding.filePath,
+    startLine: finding.startLine,
+    endLine: finding.endLine,
+    startCol: finding.startCol,
+    endCol: finding.endCol,
+    codeSnippet: finding.codeSnippet,
+    metadata: finding.metadata,
+    confidenceScore: finding.confidenceScore,
+    exploitScenario: finding.exploitScenario,
+    category: finding.category,
+    policyId: finding.policyId,
+    policyTitle: finding.policyTitle,
+    policySeverityOverride: finding.policySeverityOverride,
+    remediationGuidance: finding.remediationGuidance,
+    firstSeenAt: finding.firstSeenAt,
+    lastSeenAt: finding.lastSeenAt,
+    exclusionReason,
+    excludedAt: new Date().toISOString(),
+  };
+}
+
 /**
  * Apply hard exclusion rules to findings (Stage 1).
  */
-export function applyHardExclusions(findings: Finding[]): FilterResult {
-  const kept: Finding[] = [];
-  const excluded: Finding[] = [];
+export function applyHardExclusions(findings: ActiveFinding[]): FilterResult {
+  const kept: ActiveFinding[] = [];
+  const excluded: ExcludedFinding[] = [];
   const byExclusionReason: Record<string, number> = {};
 
   for (const finding of findings) {
@@ -128,11 +161,9 @@ export function applyHardExclusions(findings: Finding[]): FilterResult {
 
     for (const rule of HARD_EXCLUSION_RULES) {
       if (matchesExclusionRule(finding, rule)) {
-        excluded.push({
-          ...finding,
-          excluded: true,
-          exclusionReason: `[${rule.name}] ${rule.description}`,
-        });
+        excluded.push(
+          toExcludedFinding(finding, `[${rule.name}] ${rule.description}`),
+        );
         byExclusionReason[rule.name] =
           (byExclusionReason[rule.name] ?? 0) + 1;
         wasExcluded = true;
@@ -163,23 +194,29 @@ export function applyHardExclusions(findings: Finding[]): FilterResult {
  * Default threshold: 0.8 (80%) per claude-code-security-review methodology.
  */
 export function applyConfidenceThreshold(
-  findings: Finding[],
+  findings: ActiveFinding[],
   threshold = 0.8,
 ): FilterResult {
-  const kept: Finding[] = [];
-  const excluded: Finding[] = [];
+  const kept: ActiveFinding[] = [];
+  const excluded: ExcludedFinding[] = [];
 
   for (const finding of findings) {
-    const confidence = finding.confidenceScore ?? 0.7;
+    const confidence = finding.confidenceScore;
+
+    if (confidence === null) {
+      kept.push(finding);
+      continue;
+    }
 
     if (confidence >= threshold) {
       kept.push(finding);
     } else {
-      excluded.push({
-        ...finding,
-        excluded: true,
-        exclusionReason: `Low confidence: ${(confidence * 100).toFixed(0)}% < ${(threshold * 100).toFixed(0)}% threshold`,
-      });
+      excluded.push(
+        toExcludedFinding(
+          finding,
+          `Low confidence: ${(confidence * 100).toFixed(0)}% < ${(threshold * 100).toFixed(0)}% threshold`,
+        ),
+      );
     }
   }
 
@@ -190,7 +227,8 @@ export function applyConfidenceThreshold(
       total: findings.length,
       kept: kept.length,
       excluded: excluded.length,
-      byExclusionReason: { "low-confidence": excluded.length },
+      byExclusionReason:
+        excluded.length > 0 ? { "low-confidence": excluded.length } : {},
     },
   };
 }
@@ -199,7 +237,7 @@ export function applyConfidenceThreshold(
  * Run the full two-stage filtering pipeline.
  */
 export function filterFindings(
-  findings: Finding[],
+  findings: ActiveFinding[],
   options: {
     confidenceThreshold?: number;
     skipHardExclusions?: boolean;
@@ -207,7 +245,7 @@ export function filterFindings(
   } = {},
 ): FilterResult {
   let current = findings;
-  const allExcluded: Finding[] = [];
+  const allExcluded: ExcludedFinding[] = [];
   const allReasons: Record<string, number> = {};
 
   // Stage 1: Hard exclusion rules

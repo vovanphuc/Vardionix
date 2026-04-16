@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import type { Finding } from "@vardionix/schemas";
+import type { ActiveFinding, ExcludedFinding, Finding } from "@vardionix/schemas";
 
 const SEVERITY_COLORS: Record<string, (text: string) => string> = {
   critical: chalk.bgRed.white.bold,
@@ -29,7 +29,7 @@ function statusIcon(status: string): string {
   }
 }
 
-export function formatFindingsTable(findings: Finding[]): string {
+export function formatFindingsTable(findings: ActiveFinding[]): string {
   if (findings.length === 0) {
     return chalk.green("No findings found.");
   }
@@ -59,15 +59,44 @@ export function formatFindingsTable(findings: Finding[]): string {
   return [separator, header, separator, ...rows, separator].join("\n");
 }
 
+export function formatExcludedFindingsTable(findings: ExcludedFinding[]): string {
+  if (findings.length === 0) {
+    return chalk.green("No excluded findings found.");
+  }
+
+  const header = [
+    chalk.bold("ID".padEnd(16)),
+    chalk.bold("Severity".padEnd(10)),
+    chalk.bold("File".padEnd(32)),
+    chalk.bold("Reason"),
+  ].join(" ");
+
+  const separator = chalk.gray("\u2500".repeat(110));
+
+  const rows = findings.map((f) => [
+    f.id.padEnd(16),
+    colorSeverity(f.policySeverityOverride ?? f.severity),
+    chalk.cyan(`${truncate(f.filePath, 27)}:${f.startLine}`.padEnd(32)),
+    truncate(f.exclusionReason, 48),
+  ].join(" "));
+
+  return [separator, header, separator, ...rows, separator].join("\n");
+}
+
 export function formatFindingDetail(finding: Finding): string {
   const lines: string[] = [];
   const effectiveSev = finding.policySeverityOverride ?? finding.severity;
 
   lines.push(chalk.bold(`Finding ${finding.id}`));
   lines.push("");
+  lines.push(`  ${chalk.gray("Kind:")}      ${finding.kind}`);
   lines.push(`  ${chalk.gray("Rule:")}      ${finding.ruleId}`);
   lines.push(`  ${chalk.gray("Severity:")}  ${colorSeverity(effectiveSev)}`);
-  lines.push(`  ${chalk.gray("Status:")}    ${statusIcon(finding.status)} ${finding.status}`);
+  if (finding.kind === "active") {
+    lines.push(`  ${chalk.gray("Status:")}    ${statusIcon(finding.status)} ${finding.status}`);
+  } else {
+    lines.push(`  ${chalk.gray("Excluded:")}  ${finding.excludedAt}`);
+  }
   lines.push(`  ${chalk.gray("File:")}      ${chalk.cyan(finding.filePath)}:${finding.startLine}-${finding.endLine}`);
   lines.push(`  ${chalk.gray("Source:")}    ${finding.source}`);
   lines.push("");
@@ -93,6 +122,12 @@ export function formatFindingDetail(finding: Finding): string {
     lines.push(`  ${finding.remediationGuidance}`);
   }
 
+  if (finding.kind === "excluded") {
+    lines.push("");
+    lines.push(chalk.bold("  Exclusion:"));
+    lines.push(`  ${finding.exclusionReason}`);
+  }
+
   lines.push("");
   lines.push(chalk.gray(`  First seen: ${finding.firstSeenAt}`));
   lines.push(chalk.gray(`  Last seen:  ${finding.lastSeenAt}`));
@@ -103,7 +138,9 @@ export function formatFindingDetail(finding: Finding): string {
 export function formatScanSummary(result: {
   scanId: string;
   totalFindings: number;
+  totalExcluded: number;
   findingsBySeverity: Record<string, number>;
+  excludedByReason: Record<string, number>;
   target: string;
   completedAt: string;
 }): string {
@@ -119,6 +156,13 @@ export function formatScanSummary(result: {
       if (count > 0) {
         lines.push(`    ${colorSeverity(severity)} ${count}`);
       }
+    }
+  }
+
+  if (result.totalExcluded > 0) {
+    lines.push(`  Excluded findings: ${chalk.gray(String(result.totalExcluded))}`);
+    for (const [reason, count] of Object.entries(result.excludedByReason)) {
+      lines.push(`    ${chalk.gray(reason)} ${count}`);
     }
   }
 

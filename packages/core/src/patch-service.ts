@@ -1,19 +1,30 @@
-import type { Finding } from "@vardionix/schemas";
-import type { FindingsStore } from "@vardionix/store";
+import type { ActiveFinding } from "@vardionix/schemas";
+import type { ExcludedFindingsStore, FindingsStore } from "@vardionix/store";
 
 export interface PatchContext {
   findingId: string;
-  finding: Finding;
+  finding: ActiveFinding;
   prompt: string;
   contextFiles: string[];
 }
 
 export class PatchService {
-  constructor(private findingsStore: FindingsStore) {}
+  constructor(
+    private findingsStore: FindingsStore,
+    private excludedFindingsStore: ExcludedFindingsStore,
+  ) {}
 
   generatePatchContext(findingId: string): PatchContext | null {
     const finding = this.findingsStore.getFinding(findingId);
-    if (!finding) return null;
+    if (!finding) {
+      const excluded = this.excludedFindingsStore.getFinding(findingId);
+      if (excluded) {
+        throw new Error(
+          `Finding '${findingId}' is excluded and cannot be patched: ${excluded.exclusionReason}`,
+        );
+      }
+      return null;
+    }
 
     const prompt = this.buildPatchPrompt(finding);
 
@@ -25,7 +36,7 @@ export class PatchService {
     };
   }
 
-  private buildPatchPrompt(finding: Finding): string {
+  private buildPatchPrompt(finding: ActiveFinding): string {
     const lines = [
       `## Security Finding Fix Request`,
       ``,

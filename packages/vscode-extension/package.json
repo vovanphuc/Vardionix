@@ -2,7 +2,7 @@
   "name": "vardionix-vscode",
   "displayName": "Vardionix - DevSecOps",
   "description": "Unified DevSecOps tool for scanning, triaging, and remediating security findings with Semgrep, Claude, and Codex",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "vardionix",
   "license": "MIT",
   "icon": "icon.png",
@@ -10,6 +10,7 @@
     "type": "git",
     "url": "https://github.com/vovanphuc/vardionix"
   },
+  "pricing": "Free",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -49,6 +50,11 @@
         "command": "vardionix.listFindings",
         "title": "Vardionix: List Findings",
         "icon": "$(list-unordered)"
+      },
+      {
+        "command": "vardionix.listExcludedFindings",
+        "title": "Vardionix: List Excluded Findings",
+        "icon": "$(filter)"
       },
       {
         "command": "vardionix.explainFinding",
@@ -105,6 +111,11 @@
         },
         {
           "command": "vardionix.scanStagedFiles",
+          "when": "view == vardionixFindings",
+          "group": "navigation"
+        },
+        {
+          "command": "vardionix.listExcludedFindings",
           "when": "view == vardionixFindings",
           "group": "navigation"
         }

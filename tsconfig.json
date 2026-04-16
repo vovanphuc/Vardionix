@@ -6,6 +6,7 @@
     { "path": "packages/adapters" },
     { "path": "packages/core" },
     { "path": "packages/mcp-server" },
-    { "path": "packages/cli" }
+    { "path": "packages/cli" },
+    { "path": "packages/vscode-extension" }
   ]
 }

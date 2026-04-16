@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
 export interface Finding {
+  kind: "active";
   id: string;
   ruleId: string;
   severity: string;
@@ -15,6 +16,17 @@ export interface Finding {
   policyId?: string | null;
   policySeverityOverride?: string | null;
   remediationGuidance?: string | null;
+}
+
+export interface ExcludedFinding {
+  kind: "excluded";
+  id: string;
+  severity: string;
+  title: string;
+  filePath: string;
+  startLine: number;
+  exclusionReason: string;
+  policySeverityOverride?: string | null;
 }
 
 const SEVERITY_MAP: Record<string, vscode.DiagnosticSeverity> = {

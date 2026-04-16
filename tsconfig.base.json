@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "baseUrl": ".",
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
@@ -9,6 +10,12 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    "paths": {
+      "@vardionix/schemas": ["packages/schemas/src/index.ts"],
+      "@vardionix/store": ["packages/store/src/index.ts"],
+      "@vardionix/adapters": ["packages/adapters/src/index.ts"],
+      "@vardionix/core": ["packages/core/src/index.ts"]
+    },
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
