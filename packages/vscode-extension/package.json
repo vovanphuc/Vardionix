@@ -2,7 +2,7 @@
   "name": "vardionix-vscode",
   "displayName": "Vardionix - DevSecOps",
   "description": "Unified DevSecOps tool for scanning, triaging, and remediating security findings with Semgrep, Claude, and Codex",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "publisher": "vardionix",
   "license": "MIT",
   "icon": "icon.png",

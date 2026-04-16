@@ -1,0 +1,1544 @@
+rules:
+  # =======================================================
+  # TAINT MODE RULES
+  # Track data flow from untrusted sources to dangerous sinks
+  # Covers: JavaScript/TypeScript, Python, Go, PHP
+  # =======================================================
+
+  # =======================================================
+  # 1. SQL Injection — Taint Mode
+  # =======================================================
+
+  - id: python.flask.security.sqli.request-to-cursor
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input from Flask request flows into a raw SQL query via cursor.execute().
+      Use parameterized queries: cursor.execute("SELECT ... WHERE id = %s", (id,)).
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form.get(...)
+      - pattern: request.form[...]
+      - pattern: request.json.get(...)
+      - pattern: request.json[...]
+      - pattern: request.data
+    pattern-sinks:
+      - pattern: cursor.execute(...)
+      - pattern: $DB.execute(...)
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      - pattern: str(int(...))
+
+  - id: python.django.security.sqli.request-to-raw
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input from Django request flows into a raw SQL query.
+      Use Django ORM methods or parameterized raw queries:
+      Model.objects.raw("SELECT ... WHERE id = %s", [id]).
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.GET.get(...)
+      - pattern: request.GET[...]
+      - pattern: request.POST.get(...)
+      - pattern: request.POST[...]
+      - pattern: request.data.get(...)
+    pattern-sinks:
+      - pattern: $MODEL.objects.raw(...)
+      - pattern: cursor.execute(...)
+      - pattern: connection.cursor().execute(...)
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+
+  - id: javascript.express.security.sqli.req-to-query
+    mode: taint
+    severity: ERROR
+    languages: [javascript, typescript]
+    message: >
+      User input from Express request flows into a raw SQL query.
+      Use parameterized queries: db.query("SELECT ... WHERE id = ?", [id]).
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.query.$PARAM
+      - pattern: req.query[...]
+      - pattern: req.body.$PARAM
+      - pattern: req.body[...]
+      - pattern: req.params.$PARAM
+      - pattern: req.params[...]
+    pattern-sinks:
+      - pattern: $DB.query(...)
+      - pattern: $POOL.query(...)
+      - pattern: $CONN.query(...)
+      - pattern: knex.raw(...)
+      - pattern: $KNEX.raw(...)
+      - pattern: sequelize.query(...)
+      - pattern: $SEQ.query(...)
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+      - pattern: $DB.escape(...)
+
+  - id: go.nethttp.security.sqli.request-to-query
+    mode: taint
+    severity: ERROR
+    languages: [go]
+    message: >
+      User input from HTTP request flows into a raw SQL query.
+      Use parameterized queries: db.Query("SELECT ... WHERE id = ?", id).
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+      - pattern: $R.PostFormValue(...)
+    pattern-sinks:
+      - pattern: $DB.Query(...)
+      - pattern: $DB.QueryRow(...)
+      - pattern: $DB.Exec(...)
+    pattern-sanitizers:
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.ParseInt(...)
+
+  - id: go.gin.security.sqli.context-to-query
+    mode: taint
+    severity: ERROR
+    languages: [go]
+    message: >
+      User input from Gin context flows into a raw SQL query.
+      Use parameterized queries with placeholder arguments.
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $C.Query(...)
+      - pattern: $C.PostForm(...)
+      - pattern: $C.Param(...)
+      - pattern: $C.DefaultQuery(...)
+    pattern-sinks:
+      - pattern: $DB.Query(...)
+      - pattern: $DB.QueryRow(...)
+      - pattern: $DB.Exec(...)
+    pattern-sanitizers:
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.ParseInt(...)
+
+  - id: php.security.sqli.superglobal-to-query
+    mode: taint
+    severity: ERROR
+    languages: [php]
+    message: >
+      User input from $_GET/$_POST/$_REQUEST flows into a SQL query.
+      Use prepared statements: $stmt = $pdo->prepare("... WHERE id = ?");
+      $stmt->execute([$id]);
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $_GET[$KEY]
+      - pattern: $_POST[$KEY]
+      - pattern: $_REQUEST[$KEY]
+    pattern-sinks:
+      - pattern: mysqli_query($CONN, ...)
+      - pattern: $CONN->query(...)
+      - pattern: $PDO->query(...)
+    pattern-sanitizers:
+      - pattern: intval(...)
+      - pattern: mysqli_real_escape_string(...)
+      - pattern: $CONN->real_escape_string(...)
+
+  - id: php.security.sqli.superglobal-to-pdo-exec
+    mode: taint
+    severity: ERROR
+    languages: [php]
+    message: >
+      User input from superglobals flows into PDO exec/query without
+      prepared statements. Use $pdo->prepare() with bound parameters.
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $_GET[$KEY]
+      - pattern: $_POST[$KEY]
+      - pattern: $_REQUEST[$KEY]
+      - pattern: $_COOKIE[$KEY]
+    pattern-sinks:
+      - pattern: $PDO->exec(...)
+    pattern-sanitizers:
+      - pattern: intval(...)
+
+  - id: javascript.express.security.sqli.req-to-knex
+    mode: taint
+    severity: ERROR
+    languages: [javascript, typescript]
+    message: >
+      User input from Express request flows into a Knex.js raw query.
+      Use Knex query builder methods with bound parameters instead of raw().
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.query.$PARAM
+      - pattern: req.body.$PARAM
+      - pattern: req.params.$PARAM
+    pattern-sinks:
+      - pattern: $KNEX.raw(...)
+      - pattern: $KNEX.whereRaw(...)
+      - pattern: $KNEX.orderByRaw(...)
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+
+  - id: python.flask.security.sqli.request-to-sqlalchemy
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input from Flask request flows into SQLAlchemy execute().
+      Use SQLAlchemy ORM or parameterized text() queries.
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+      - pattern: request.json.get(...)
+    pattern-sinks:
+      - pattern: db.engine.execute(...)
+      - pattern: db.session.execute(...)
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: text(...).bindparams(...)
+
+  # =======================================================
+  # 2. XSS — Taint Mode
+  # =======================================================
+
+  - id: python.flask.security.xss.request-to-response
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input from Flask request flows into an unescaped HTTP response.
+      Use render_template() with Jinja2 auto-escaping or markupsafe.escape().
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form.get(...)
+    pattern-sinks:
+      - pattern: render_template_string(...)
+      - pattern: Response(...)
+      - pattern: make_response(...)
+    pattern-sanitizers:
+      - pattern: escape(...)
+      - pattern: markupsafe.escape(...)
+      - pattern: bleach.clean(...)
+
+  - id: python.flask.security.xss.request-to-template-string
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input flows into render_template_string(), enabling Server-Side
+      Template Injection. Use render_template() with a static file instead.
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+      - pattern: request.data
+    pattern-sinks:
+      - pattern: render_template_string(...)
+    pattern-sanitizers:
+      - pattern: escape(...)
+
+  - id: javascript.express.security.xss.req-to-response
+    mode: taint
+    severity: ERROR
+    languages: [javascript, typescript]
+    message: >
+      User input from Express request flows into HTTP response without
+      escaping. Use a template engine with auto-escaping or sanitize output.
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.query.$PARAM
+      - pattern: req.query[...]
+      - pattern: req.body.$PARAM
+      - pattern: req.params.$PARAM
+    pattern-sinks:
+      - pattern: res.send(...)
+      - pattern: res.write(...)
+      - pattern: res.end(...)
+    pattern-sanitizers:
+      - pattern: $SANITIZER.sanitize(...)
+      - pattern: DOMPurify.sanitize(...)
+      - pattern: escapeHtml(...)
+      - pattern: encodeURIComponent(...)
+
+  - id: go.nethttp.security.xss.request-to-fprintf
+    mode: taint
+    severity: ERROR
+    languages: [go]
+    message: >
+      User input from HTTP request flows into fmt.Fprintf writing to
+      ResponseWriter. Use html/template or html.EscapeString() to prevent XSS.
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+      - pattern: $R.PostFormValue(...)
+    pattern-sinks:
+      - pattern: fmt.Fprintf($W, ...)
+      - pattern: fmt.Fprint($W, ...)
+      - pattern: $W.Write(...)
+      - pattern: io.WriteString($W, ...)
+    pattern-sanitizers:
+      - pattern: html.EscapeString(...)
+      - pattern: template.HTMLEscapeString(...)
+
+  - id: go.nethttp.security.xss.request-to-write
+    mode: taint
+    severity: ERROR
+    languages: [go]
+    message: >
+      User input flows directly into http.ResponseWriter.Write().
+      Use html/template for rendering or html.EscapeString() for escaping.
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+    pattern-sinks:
+      - pattern: $W.Write([]byte(...))
+    pattern-sanitizers:
+      - pattern: html.EscapeString(...)
+
+  - id: php.security.xss.superglobal-to-echo
+    mode: taint
+    severity: ERROR
+    languages: [php]
+    message: >
+      User input from $_GET/$_POST flows into echo/print without escaping.
+      Use htmlspecialchars($input, ENT_QUOTES, 'UTF-8') before output.
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $_GET[$KEY]
+      - pattern: $_POST[$KEY]
+      - pattern: $_REQUEST[$KEY]
+    pattern-sinks:
+      - pattern: echo $X;
+      - pattern: print $X;
+    pattern-sanitizers:
+      - pattern: htmlspecialchars(...)
+      - pattern: htmlentities(...)
+      - pattern: strip_tags(...)
+
+  - id: php.security.xss.superglobal-to-printf
+    mode: taint
+    severity: ERROR
+    languages: [php]
+    message: >
+      User input flows into printf/sprintf for HTML output without escaping.
+      Use htmlspecialchars() on all user input before output.
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $_GET[$KEY]
+      - pattern: $_POST[$KEY]
+    pattern-sinks:
+      - pattern: printf(...)
+      - pattern: sprintf(...)
+    pattern-sanitizers:
+      - pattern: htmlspecialchars(...)
+      - pattern: htmlentities(...)
+
+  # =======================================================
+  # 3. Command Injection — Taint Mode
+  # =======================================================
+
+  - id: python.flask.security.cmdi.request-to-os-system
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input from Flask request flows into os.system() or subprocess
+      with shell=True, enabling command injection. Use subprocess.run()
+      with a list of arguments and shell=False.
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form.get(...)
+      - pattern: request.form[...]
+      - pattern: request.json.get(...)
+    pattern-sinks:
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+      - pattern: subprocess.run(..., shell=True, ...)
+      - pattern: subprocess.Popen(..., shell=True, ...)
+      - pattern: subprocess.call(..., shell=True, ...)
+      - pattern: subprocess.check_output(..., shell=True, ...)
+    pattern-sanitizers:
+      - pattern: shlex.quote(...)
+      - pattern: pipes.quote(...)
+
+  - id: python.django.security.cmdi.request-to-subprocess
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input from Django request flows into a subprocess call.
+      Use subprocess.run() with a list of arguments and shell=False.
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.GET.get(...)
+      - pattern: request.GET[...]
+      - pattern: request.POST.get(...)
+      - pattern: request.POST[...]
+    pattern-sinks:
+      - pattern: os.system(...)
+      - pattern: subprocess.run(..., shell=True, ...)
+      - pattern: subprocess.Popen(..., shell=True, ...)
+    pattern-sanitizers:
+      - pattern: shlex.quote(...)
+
+  - id: javascript.express.security.cmdi.req-to-child-process
+    mode: taint
+    severity: ERROR
+    languages: [javascript, typescript]
+    message: >
+      User input from Express request flows into child_process functions,
+      enabling command injection. Use execFile() with an argument array
+      instead of exec() which invokes a shell.
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.query.$PARAM
+      - pattern: req.query[...]
+      - pattern: req.body.$PARAM
+      - pattern: req.body[...]
+      - pattern: req.params.$PARAM
+    pattern-sinks:
+      - pattern: child_process.exec(...)
+      - pattern: child_process.execSync(...)
+    pattern-sanitizers:
+      - pattern: $SHELL.escape(...)
+
+  - id: javascript.express.security.cmdi.req-to-spawn-shell
+    mode: taint
+    severity: ERROR
+    languages: [javascript, typescript]
+    message: >
+      User input flows into spawn/execSync with shell option.
+      Use spawn() or execFile() without the shell option and pass
+      arguments as an array.
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.query.$PARAM
+      - pattern: req.body.$PARAM
+    pattern-sinks:
+      - pattern: execSync(...)
+    pattern-sanitizers:
+      - pattern: $SHELL.escape(...)
+
+  - id: go.nethttp.security.cmdi.request-to-exec-command
+    mode: taint
+    severity: ERROR
+    languages: [go]
+    message: >
+      User input from HTTP request flows into exec.Command with shell
+      invocation. Use exec.Command with the binary directly and pass
+      arguments separately instead of using sh -c.
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+      - pattern: $R.PostFormValue(...)
+    pattern-sinks:
+      - pattern: exec.Command("sh", "-c", ...)
+      - pattern: exec.Command("bash", "-c", ...)
+      - pattern: exec.Command(...)
+    pattern-sanitizers:
+      - pattern: filepath.Base(...)
+      - pattern: strconv.Atoi(...)
+
+  - id: go.gin.security.cmdi.context-to-exec
+    mode: taint
+    severity: ERROR
+    languages: [go]
+    message: >
+      User input from Gin context flows into exec.Command.
+      Avoid invoking a shell. Use exec.Command with the binary and
+      separate arguments.
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $C.Query(...)
+      - pattern: $C.PostForm(...)
+      - pattern: $C.Param(...)
+    pattern-sinks:
+      - pattern: exec.Command("sh", "-c", ...)
+      - pattern: exec.Command("bash", "-c", ...)
+    pattern-sanitizers:
+      - pattern: strconv.Atoi(...)
+
+  - id: php.security.cmdi.superglobal-to-shell
+    mode: taint
+    severity: ERROR
+    languages: [php]
+    message: >
+      User input from $_GET/$_POST flows into a shell execution function.
+      Use escapeshellarg() and escapeshellcmd() or avoid shell commands.
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $_GET[$KEY]
+      - pattern: $_POST[$KEY]
+      - pattern: $_REQUEST[$KEY]
+    pattern-sinks:
+      - pattern: shell_exec(...)
+      - pattern: system(...)
+      - pattern: passthru(...)
+      - pattern: popen(...)
+    pattern-sanitizers:
+      - pattern: escapeshellarg(...)
+      - pattern: escapeshellcmd(...)
+
+  - id: php.security.cmdi.superglobal-to-exec
+    mode: taint
+    severity: ERROR
+    languages: [php]
+    message: >
+      User input flows into exec() or proc_open(), enabling command injection.
+      Sanitize with escapeshellarg() or avoid shell commands entirely.
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $_GET[$KEY]
+      - pattern: $_POST[$KEY]
+    pattern-sinks:
+      - pattern: exec(...)
+      - pattern: proc_open(...)
+    pattern-sanitizers:
+      - pattern: escapeshellarg(...)
+      - pattern: escapeshellcmd(...)
+
+  # =======================================================
+  # 4. SSRF — Taint Mode
+  # =======================================================
+
+  - id: python.flask.security.ssrf.request-to-http
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input from Flask request flows into an outbound HTTP request,
+      enabling SSRF. Validate URLs against an allowlist and block
+      internal/private IP ranges (10.x, 172.16.x, 192.168.x, 127.x, 169.254.x).
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form.get(...)
+      - pattern: request.json.get(...)
+    pattern-sinks:
+      - pattern: requests.get(...)
+      - pattern: requests.post(...)
+      - pattern: requests.put(...)
+      - pattern: requests.delete(...)
+      - pattern: urllib.request.urlopen(...)
+      - pattern: httpx.get(...)
+      - pattern: httpx.post(...)
+    pattern-sanitizers:
+      - pattern: urllib.parse.urlparse(...)
+
+  - id: python.django.security.ssrf.request-to-http
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input from Django request flows into an outbound HTTP request.
+      Validate and allowlist destination URLs. Block private IP ranges.
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.GET.get(...)
+      - pattern: request.POST.get(...)
+    pattern-sinks:
+      - pattern: requests.get(...)
+      - pattern: requests.post(...)
+      - pattern: urllib.request.urlopen(...)
+    pattern-sanitizers:
+      - pattern: urllib.parse.urlparse(...)
+
+  - id: javascript.express.security.ssrf.req-to-fetch
+    mode: taint
+    severity: ERROR
+    languages: [javascript, typescript]
+    message: >
+      User input from Express request flows into an outbound HTTP request,
+      enabling SSRF. Validate URLs against an allowlist and block private IPs.
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.query.$PARAM
+      - pattern: req.query[...]
+      - pattern: req.body.$PARAM
+      - pattern: req.body[...]
+    pattern-sinks:
+      - pattern: fetch(...)
+      - pattern: axios.get(...)
+      - pattern: axios.post(...)
+      - pattern: axios(...)
+      - pattern: http.request(...)
+      - pattern: https.request(...)
+    pattern-sanitizers:
+      - pattern: new URL(...)
+
+  - id: go.nethttp.security.ssrf.request-to-http-get
+    mode: taint
+    severity: ERROR
+    languages: [go]
+    message: >
+      User input from HTTP request flows into http.Get/http.NewRequest,
+      enabling SSRF. Validate and allowlist destination URLs.
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+    pattern-sinks:
+      - pattern: http.Get(...)
+      - pattern: http.Post(...)
+      - pattern: http.NewRequest(...)
+      - pattern: http.NewRequestWithContext(...)
+    pattern-sanitizers:
+      - pattern: url.Parse(...)
+
+  - id: go.gin.security.ssrf.context-to-http
+    mode: taint
+    severity: ERROR
+    languages: [go]
+    message: >
+      User input from Gin context flows into an outbound HTTP request.
+      Validate and allowlist destination URLs before making requests.
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $C.Query(...)
+      - pattern: $C.PostForm(...)
+    pattern-sinks:
+      - pattern: http.Get(...)
+      - pattern: http.NewRequest(...)
+    pattern-sanitizers:
+      - pattern: url.Parse(...)
+
+  - id: php.security.ssrf.superglobal-to-curl
+    mode: taint
+    severity: ERROR
+    languages: [php]
+    message: >
+      User input from superglobals flows into cURL or file_get_contents,
+      enabling SSRF. Validate and allowlist destination URLs.
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $_GET[$KEY]
+      - pattern: $_POST[$KEY]
+      - pattern: $_REQUEST[$KEY]
+    pattern-sinks:
+      - pattern: file_get_contents(...)
+      - pattern: curl_init(...)
+      - pattern: curl_setopt($CH, CURLOPT_URL, ...)
+      - pattern: fopen(..., "r")
+    pattern-sanitizers:
+      - pattern: filter_var(..., FILTER_VALIDATE_URL)
+      - pattern: parse_url(...)
+
+  # =======================================================
+  # 5. Path Traversal — Taint Mode
+  # =======================================================
+
+  - id: python.flask.security.path-traversal.request-to-open
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input from Flask request flows into a file open() call,
+      enabling path traversal. Resolve the path with os.path.realpath()
+      and verify it starts with the intended base directory.
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form.get(...)
+    pattern-sinks:
+      - pattern: open(...)
+      - pattern: pathlib.Path(...).read_text()
+      - pattern: pathlib.Path(...).read_bytes()
+      - pattern: pathlib.Path(...).open(...)
+    pattern-sanitizers:
+      - pattern: os.path.basename(...)
+      - pattern: secure_filename(...)
+
+  - id: python.flask.security.path-traversal.request-to-send-file
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input flows into send_file() or send_from_directory().
+      Validate the filename with secure_filename() and verify the
+      resolved path is within the intended directory.
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+    pattern-sinks:
+      - pattern: send_file(...)
+      - pattern: send_from_directory(...)
+    pattern-sanitizers:
+      - pattern: secure_filename(...)
+      - pattern: os.path.basename(...)
+
+  - id: javascript.express.security.path-traversal.req-to-fs
+    mode: taint
+    severity: ERROR
+    languages: [javascript, typescript]
+    message: >
+      User input from Express request flows into a filesystem operation,
+      enabling path traversal. Resolve the path and verify it starts
+      with the intended base directory using path.resolve() and startsWith().
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.query.$PARAM
+      - pattern: req.query[...]
+      - pattern: req.body.$PARAM
+      - pattern: req.params.$PARAM
+    pattern-sinks:
+      - pattern: fs.readFileSync(...)
+      - pattern: fs.readFile(...)
+      - pattern: fs.createReadStream(...)
+      - pattern: res.sendFile(...)
+      - pattern: fs.writeFileSync(...)
+    pattern-sanitizers:
+      - pattern: path.basename(...)
+      - pattern: path.normalize(...)
+
+  - id: go.nethttp.security.path-traversal.request-to-readfile
+    mode: taint
+    severity: ERROR
+    languages: [go]
+    message: >
+      User input from HTTP request flows into a file read operation,
+      enabling path traversal. Use filepath.Clean() and verify the
+      resolved path is within the intended directory.
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+    pattern-sinks:
+      - pattern: os.ReadFile(...)
+      - pattern: os.Open(...)
+      - pattern: ioutil.ReadFile(...)
+      - pattern: http.ServeFile(...)
+    pattern-sanitizers:
+      - pattern: filepath.Clean(...)
+      - pattern: filepath.Base(...)
+
+  - id: go.nethttp.security.path-traversal.request-to-servefile
+    mode: taint
+    severity: ERROR
+    languages: [go]
+    message: >
+      User input flows into http.ServeFile(). Validate and canonicalize
+      the path to prevent directory traversal attacks.
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+      - pattern: $R.URL.Path
+    pattern-sinks:
+      - pattern: http.ServeFile($W, $R, ...)
+    pattern-sanitizers:
+      - pattern: filepath.Clean(...)
+      - pattern: filepath.Base(...)
+
+  - id: php.security.path-traversal.superglobal-to-fopen
+    mode: taint
+    severity: ERROR
+    languages: [php]
+    message: >
+      User input from superglobals flows into file operations,
+      enabling path traversal. Use basename() and realpath() to
+      validate paths within the intended directory.
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $_GET[$KEY]
+      - pattern: $_POST[$KEY]
+      - pattern: $_REQUEST[$KEY]
+    pattern-sinks:
+      - pattern: fopen(...)
+      - pattern: readfile(...)
+      - pattern: file_get_contents(...)
+      - pattern: include(...)
+      - pattern: require(...)
+      - pattern: include_once(...)
+      - pattern: require_once(...)
+    pattern-sanitizers:
+      - pattern: basename(...)
+      - pattern: realpath(...)
+
+  # =======================================================
+  # 6. Open Redirect — Taint Mode
+  # =======================================================
+
+  - id: python.flask.security.open-redirect.request-to-redirect
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input from Flask request flows into redirect(), enabling
+      open redirect attacks. Validate the URL against a trusted domain
+      allowlist or use url_for() for internal redirects.
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form.get(...)
+    pattern-sinks:
+      - pattern: redirect(...)
+    pattern-sanitizers:
+      - pattern: url_for(...)
+      - pattern: urllib.parse.urlparse(...)
+
+  - id: python.django.security.open-redirect.request-to-redirect
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input from Django request flows into HttpResponseRedirect,
+      enabling open redirect. Use reverse() for internal redirects.
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.GET.get(...)
+      - pattern: request.GET[...]
+      - pattern: request.POST.get(...)
+    pattern-sinks:
+      - pattern: HttpResponseRedirect(...)
+      - pattern: redirect(...)
+    pattern-sanitizers:
+      - pattern: reverse(...)
+      - pattern: url_has_allowed_host_and_scheme(...)
+
+  - id: javascript.express.security.open-redirect.req-to-redirect
+    mode: taint
+    severity: ERROR
+    languages: [javascript, typescript]
+    message: >
+      User input from Express request flows into res.redirect(),
+      enabling open redirect. Validate the URL against a trusted
+      domain allowlist.
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.query.$PARAM
+      - pattern: req.query[...]
+      - pattern: req.body.$PARAM
+    pattern-sinks:
+      - pattern: res.redirect(...)
+    pattern-sanitizers:
+      - pattern: new URL(...)
+
+  - id: go.nethttp.security.open-redirect.request-to-redirect
+    mode: taint
+    severity: ERROR
+    languages: [go]
+    message: >
+      User input from HTTP request flows into http.Redirect(),
+      enabling open redirect. Validate the URL against a trusted
+      domain allowlist.
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+    pattern-sinks:
+      - pattern: http.Redirect(...)
+    pattern-sanitizers:
+      - pattern: url.Parse(...)
+
+  - id: php.security.open-redirect.superglobal-to-header
+    mode: taint
+    severity: ERROR
+    languages: [php]
+    message: >
+      User input from superglobals flows into a Location header,
+      enabling open redirect. Validate the URL against trusted domains.
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $_GET[$KEY]
+      - pattern: $_POST[$KEY]
+      - pattern: $_REQUEST[$KEY]
+    pattern-sinks:
+      - pattern: header(...)
+    pattern-sanitizers:
+      - pattern: filter_var(..., FILTER_VALIDATE_URL)
+      - pattern: parse_url(...)
+
+  # =======================================================
+  # 7. Insecure Deserialization — Taint Mode
+  # =======================================================
+
+  - id: python.flask.security.deserialization.request-to-pickle
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input from Flask request flows into pickle.loads(), enabling
+      arbitrary code execution. Use JSON for untrusted data deserialization.
+    metadata:
+      cwe: ["CWE-502"]
+      owasp: ["A08:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.data
+      - pattern: request.get_data()
+      - pattern: request.json.get(...)
+      - pattern: request.form.get(...)
+    pattern-sinks:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: _pickle.loads(...)
+    pattern-sanitizers:
+      - pattern: json.loads(...)
+
+  - id: python.flask.security.deserialization.request-to-yaml
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input flows into yaml.load() with an unsafe loader, enabling
+      code execution. Use yaml.safe_load() instead.
+    metadata:
+      cwe: ["CWE-502"]
+      owasp: ["A08:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.data
+      - pattern: request.get_data()
+      - pattern: request.form.get(...)
+    pattern-sinks:
+      - pattern: yaml.load(...)
+      - pattern: yaml.unsafe_load(...)
+    pattern-sanitizers:
+      - pattern: yaml.safe_load(...)
+
+  - id: php.security.deserialization.superglobal-to-unserialize
+    mode: taint
+    severity: ERROR
+    languages: [php]
+    message: >
+      User input from superglobals flows into unserialize(), enabling
+      PHP Object Injection and potentially RCE. Use json_decode() instead.
+    metadata:
+      cwe: ["CWE-502"]
+      owasp: ["A08:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $_GET[$KEY]
+      - pattern: $_POST[$KEY]
+      - pattern: $_REQUEST[$KEY]
+      - pattern: $_COOKIE[$KEY]
+    pattern-sinks:
+      - pattern: unserialize(...)
+    pattern-sanitizers:
+      - pattern: json_decode(...)
+
+  - id: javascript.express.security.deserialization.req-to-eval
+    mode: taint
+    severity: ERROR
+    languages: [javascript, typescript]
+    message: >
+      User input flows through eval() or Function constructor for
+      deserialization. Use JSON.parse() for safe data parsing.
+    metadata:
+      cwe: ["CWE-502"]
+      owasp: ["A08:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.body.$PARAM
+      - pattern: req.query.$PARAM
+    pattern-sinks:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+    pattern-sanitizers:
+      - pattern: JSON.parse(...)
+
+  # =======================================================
+  # 8. NoSQL Injection — Taint Mode
+  # =======================================================
+
+  - id: javascript.express.security.nosqli.req-to-mongodb-find
+    mode: taint
+    severity: ERROR
+    languages: [javascript, typescript]
+    message: >
+      User input from Express request flows into MongoDB find/findOne.
+      Attackers can inject operators like {$gt: ""} to bypass authentication.
+      Validate query objects and reject keys starting with $.
+    metadata:
+      cwe: ["CWE-943"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.body.$PARAM
+      - pattern: req.body[...]
+      - pattern: req.query.$PARAM
+      - pattern: req.query[...]
+    pattern-sinks:
+      - pattern: $COLLECTION.find(...)
+      - pattern: $COLLECTION.findOne(...)
+      - pattern: $DB.collection(...).find(...)
+      - pattern: $DB.collection(...).findOne(...)
+    pattern-sanitizers:
+      - pattern: JSON.stringify(...)
+      - pattern: $MONGO.sanitize(...)
+
+  - id: javascript.express.security.nosqli.req-to-mongoose
+    mode: taint
+    severity: ERROR
+    languages: [javascript, typescript]
+    message: >
+      User input flows into Mongoose query methods. Validate and sanitize
+      query objects to prevent NoSQL injection via operator injection.
+    metadata:
+      cwe: ["CWE-943"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.body.$PARAM
+      - pattern: req.query.$PARAM
+    pattern-sinks:
+      - pattern: $MODEL.find(...)
+      - pattern: $MODEL.findOne(...)
+      - pattern: $MODEL.findOneAndUpdate(...)
+      - pattern: $MODEL.updateMany(...)
+    pattern-sanitizers:
+      - pattern: $MONGO.sanitize(...)
+
+  - id: python.flask.security.nosqli.request-to-pymongo
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input from Flask request flows into PyMongo query methods.
+      Validate query objects and reject keys with $ operators.
+    metadata:
+      cwe: ["CWE-943"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.json
+      - pattern: request.json.get(...)
+      - pattern: request.args.get(...)
+    pattern-sinks:
+      - pattern: $COLLECTION.find(...)
+      - pattern: $COLLECTION.find_one(...)
+      - pattern: $COLLECTION.update_one(...)
+    pattern-sanitizers:
+      - pattern: json.dumps(...)
+
+  # =======================================================
+  # 9. Server-Side Template Injection — Taint Mode
+  # =======================================================
+
+  - id: python.flask.security.ssti.request-to-template
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input flows into Jinja2 Template() or render_template_string(),
+      enabling Server-Side Template Injection and potential RCE.
+      Use render_template() with static template files.
+    metadata:
+      cwe: ["CWE-1336"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+      - pattern: request.data
+    pattern-sinks:
+      - pattern: Template(...).render(...)
+      - pattern: $ENV.from_string(...).render(...)
+      - pattern: render_template_string(...)
+    pattern-sanitizers:
+      - pattern: escape(...)
+      - pattern: markupsafe.escape(...)
+
+  # =======================================================
+  # 10. Log Injection — Taint Mode
+  # =======================================================
+
+  - id: python.flask.security.log-injection.request-to-log
+    mode: taint
+    severity: WARNING
+    languages: [python]
+    message: >
+      User input flows into logging statements without sanitization.
+      Attackers can inject fake log entries or CRLF sequences. Sanitize
+      input by removing newline characters before logging.
+    metadata:
+      cwe: ["CWE-117"]
+      owasp: ["A09:2021"]
+      confidence: MEDIUM
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+      - pattern: request.headers.get(...)
+    pattern-sinks:
+      - pattern: logging.info(...)
+      - pattern: logging.warning(...)
+      - pattern: logging.error(...)
+      - pattern: $LOGGER.info(...)
+      - pattern: $LOGGER.warning(...)
+    pattern-sanitizers:
+      - pattern: $X.replace("\n", ...)
+      - pattern: $X.replace("\r", ...)
+
+  - id: javascript.express.security.log-injection.req-to-log
+    mode: taint
+    severity: WARNING
+    languages: [javascript, typescript]
+    message: >
+      User input flows into logging statements. Sanitize input by
+      removing newline characters to prevent log injection attacks.
+    metadata:
+      cwe: ["CWE-117"]
+      owasp: ["A09:2021"]
+      confidence: MEDIUM
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.query.$PARAM
+      - pattern: req.body.$PARAM
+      - pattern: req.headers[...]
+    pattern-sinks:
+      - pattern: console.log(...)
+      - pattern: $LOGGER.info(...)
+      - pattern: $LOGGER.warn(...)
+      - pattern: $LOGGER.error(...)
+    pattern-sanitizers:
+      - pattern: $X.replace(...)
+
+  # =======================================================
+  # 11. Header Injection — Taint Mode
+  # =======================================================
+
+  - id: javascript.express.security.header-injection.req-to-header
+    mode: taint
+    severity: WARNING
+    languages: [javascript, typescript]
+    message: >
+      User input flows into HTTP response headers. Attackers can inject
+      CRLF sequences to split responses or add malicious headers.
+      Sanitize header values by removing newline characters.
+    metadata:
+      cwe: ["CWE-113"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.query.$PARAM
+      - pattern: req.body.$PARAM
+    pattern-sinks:
+      - pattern: res.setHeader(...)
+      - pattern: res.header(...)
+    pattern-sanitizers:
+      - pattern: encodeURIComponent(...)
+      - pattern: $X.replace(...)
+
+  - id: php.security.header-injection.superglobal-to-header
+    mode: taint
+    severity: WARNING
+    languages: [php]
+    message: >
+      User input flows into header() function. Remove newline characters
+      to prevent HTTP response splitting attacks.
+    metadata:
+      cwe: ["CWE-113"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $_GET[$KEY]
+      - pattern: $_POST[$KEY]
+    pattern-sinks:
+      - pattern: header(...)
+    pattern-sanitizers:
+      - pattern: str_replace(...)
+      - pattern: filter_var(...)
+
+  # =======================================================
+  # 12. Code Injection — Taint Mode
+  # =======================================================
+
+  - id: python.flask.security.code-injection.request-to-eval
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input flows into eval() or exec(), enabling arbitrary code
+      execution. Never use eval/exec with user input. Use ast.literal_eval()
+      for safe data evaluation.
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+      - pattern: request.json.get(...)
+      - pattern: request.data
+    pattern-sinks:
+      - pattern: eval(...)
+      - pattern: compile(...)
+    pattern-sanitizers:
+      - pattern: ast.literal_eval(...)
+
+  - id: php.security.code-injection.superglobal-to-eval
+    mode: taint
+    severity: ERROR
+    languages: [php]
+    message: >
+      User input flows into eval(), enabling arbitrary code execution.
+      Never use eval() with user-controlled data.
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $_GET[$KEY]
+      - pattern: $_POST[$KEY]
+      - pattern: $_REQUEST[$KEY]
+    pattern-sinks:
+      - pattern: eval(...)
+      - pattern: assert(...)
+    pattern-sanitizers:
+      - pattern: intval(...)
+
+  # =======================================================
+  # 13. XML External Entity (XXE) — Taint Mode
+  # =======================================================
+
+  - id: python.flask.security.xxe.request-to-xml-parse
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input flows into an XML parser that may resolve external entities.
+      Use defusedxml library or configure the parser to disable entity resolution.
+    metadata:
+      cwe: ["CWE-611"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.data
+      - pattern: request.get_data()
+    pattern-sinks:
+      - pattern: ET.fromstring(...)
+      - pattern: etree.fromstring(...)
+      - pattern: etree.parse(...)
+      - pattern: minidom.parseString(...)
+    pattern-sanitizers:
+      - pattern: defusedxml.ElementTree.fromstring(...)
+      - pattern: defusedxml.parse(...)
+
+  - id: php.security.xxe.superglobal-to-xml-parse
+    mode: taint
+    severity: ERROR
+    languages: [php]
+    message: >
+      User input flows into XML parsing functions. Disable external entity
+      loading with libxml_disable_entity_loader(true) before parsing.
+    metadata:
+      cwe: ["CWE-611"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: $_POST[$KEY]
+      - pattern: file_get_contents("php://input")
+    pattern-sinks:
+      - pattern: simplexml_load_string(...)
+      - pattern: $DOC->loadXML(...)
+    pattern-sanitizers:
+      - pattern: libxml_disable_entity_loader(true)
+
+  # =======================================================
+  # 14. LDAP Injection — Taint Mode
+  # =======================================================
+
+  - id: python.flask.security.ldap-injection.request-to-search
+    mode: taint
+    severity: ERROR
+    languages: [python]
+    message: >
+      User input flows into an LDAP search filter, enabling LDAP injection.
+      Use ldap.filter.escape_filter_chars() to sanitize input.
+    metadata:
+      cwe: ["CWE-90"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+    pattern-sinks:
+      - pattern: $CONN.search_s(...)
+      - pattern: $CONN.search(...)
+    pattern-sanitizers:
+      - pattern: ldap.filter.escape_filter_chars(...)
+
+  # =======================================================
+  # 15. Mass Assignment — Taint Mode
+  # =======================================================
+
+  - id: javascript.express.security.mass-assignment.req-body-to-model
+    mode: taint
+    severity: ERROR
+    languages: [javascript, typescript]
+    message: >
+      Request body is spread directly into model creation, enabling
+      mass assignment. Attackers can set privileged fields (isAdmin, role).
+      Explicitly pick allowed fields from the request body.
+    metadata:
+      cwe: ["CWE-915"]
+      owasp: ["A04:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.body
+    pattern-sinks:
+      - pattern: $MODEL.create(...)
+      - pattern: $MODEL.update(...)
+      - pattern: new $MODEL(...)
+      - pattern: $MODEL.findOneAndUpdate(...)
+    pattern-sanitizers:
+      - pattern: $LODASH.pick(...)
+      - pattern: pick(...)

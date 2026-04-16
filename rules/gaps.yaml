@@ -1,0 +1,366 @@
+rules:
+  # ============================================================
+  # GAP 1: Hardcoded secrets in config objects/structs
+  # ============================================================
+
+  # JavaScript/TypeScript
+  - id: js.security.secrets.hardcoded-secret-in-object
+    patterns:
+      - pattern: |
+          {... , $KEY: "...", ...}
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i)(password|passwd|secret|api_key|apiKey|api_secret|access_key|private_key|auth_token|db_password|database_password|secret_key|jwt_secret|stripe_secret|token)
+    message: >
+      Hardcoded secret in object property '$KEY'. Use env vars or secrets manager.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-798"]
+      confidence: MEDIUM
+
+  # Python
+  - id: python.security.secrets.hardcoded-secret-in-dict
+    patterns:
+      - pattern: |
+          {... , "$KEY": "...", ...}
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i)(password|passwd|secret|api_key|api_secret|access_key|private_key|auth_token|db_password|secret_key|jwt_secret|stripe_secret|token)
+    message: >
+      Hardcoded secret in dict key '$KEY'. Use env vars or secrets manager.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-798"]
+      confidence: MEDIUM
+
+  # Go
+  - id: go.security.secrets.hardcoded-secret-in-struct
+    patterns:
+      - pattern: |
+          $TYPE{..., $FIELD: "...", ...}
+      - metavariable-regex:
+          metavariable: $FIELD
+          regex: (?i)(Password|Secret|APIKey|AccessKey|SecretKey|PrivateKey|AuthToken|JWTSecret|Token)
+    message: >
+      Hardcoded secret in struct field '$FIELD'. Use env vars or secrets manager.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-798"]
+      confidence: HIGH
+
+  # PHP
+  - id: php.security.secrets.hardcoded-secret-in-array
+    patterns:
+      - pattern: |
+          [..., "$KEY" => "...", ...]
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i)(password|passwd|secret|api_key|api_secret|access_key|private_key|auth_token|db_password|secret_key)
+    message: >
+      Hardcoded secret in array key '$KEY'. Use env vars or secrets manager.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-798"]
+      confidence: MEDIUM
+
+  # ============================================================
+  # GAP 2: Go insecure cookies (missing Secure flag)
+  # ============================================================
+  - id: go.security.cookie.missing-secure-flag
+    patterns:
+      - pattern: |
+          &http.Cookie{...}
+      - pattern-not: |
+          &http.Cookie{..., Secure: true, ...}
+    message: >
+      Cookie created without Secure: true. Set Secure: true for HTTPS-only.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-614"]
+      confidence: MEDIUM
+
+  # ============================================================
+  # GAP 3: Go CORS reflected origin
+  # ============================================================
+  - id: go.security.cors.reflect-origin
+    pattern: |
+      $W.Header().Set("Access-Control-Allow-Origin", $R.Header.Get("Origin"))
+    message: >
+      Reflecting request Origin in CORS without validation allows any origin.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-942"]
+      confidence: HIGH
+
+  # ============================================================
+  # GAP 4: PHP type juggling
+  # ============================================================
+  - id: php.security.type-juggling.loose-comparison
+    patterns:
+      - pattern: |
+          $A == $B
+      - metavariable-regex:
+          metavariable: $A
+          regex: (?i).*(password|passwd|token|hash|secret|key|hmac|signature|api_key|nonce|admin|role).*
+    message: >
+      Loose comparison (==) on sensitive variable vulnerable to type juggling. Use ===.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-1024"]
+      confidence: MEDIUM
+
+  # ============================================================
+  # GAP 5: PHP command injection through class methods
+  # ============================================================
+  - id: php.security.cmdi.method-call-concat
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $OBJ->$METHOD("..." . $INPUT)
+          - pattern: |
+              $OBJ->$METHOD("...$INPUT...")
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: (?i)(exec|execute|system|run|shell|command|cmd|process|passthru|query)
+    message: >
+      Command/query via class method with string concat. Sanitize input.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78"]
+      confidence: MEDIUM
+
+  # ============================================================
+  # GAP 6: Python yaml.load without Loader
+  # ============================================================
+  - id: python.security.deserialization.yaml-load-no-safe-loader
+    patterns:
+      - pattern: yaml.load(...)
+      - pattern-not: yaml.load(..., Loader=yaml.SafeLoader)
+      - pattern-not: yaml.load(..., Loader=yaml.CSafeLoader)
+      - pattern-not: yaml.load(..., Loader=yaml.BaseLoader)
+      - pattern-not: yaml.load(..., Loader=yaml.CBaseLoader)
+      - pattern-not: yaml.safe_load(...)
+    message: >
+      yaml.load() without safe Loader can execute arbitrary code. Use yaml.safe_load().
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502"]
+      confidence: HIGH
+
+  # ============================================================
+  # GAP 7: Go mass assignment
+  # ============================================================
+  - id: go.security.mass-assignment.json-decode-body
+    patterns:
+      - pattern-either:
+          - pattern: json.NewDecoder($R.Body).Decode(...)
+          - pattern: |
+              json.Unmarshal($BODY, ...)
+    message: >
+      Decoding request body directly into struct enables mass assignment. Use a DTO.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-915"]
+      confidence: MEDIUM
+
+  # ============================================================
+  # GAP 8: JS mass assignment via spread
+  # ============================================================
+  - id: js.security.mass-assignment.spread-body
+    patterns:
+      - pattern-either:
+          - pattern: |
+              {...$REQ.body}
+          - pattern: |
+              {...$REQ.body, ...}
+          - pattern: |
+              Object.assign($TARGET, $REQ.body)
+    message: >
+      Spreading/assigning request body copies all fields. Destructure allowed fields only.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-915"]
+      confidence: HIGH
+
+  # ============================================================
+  # GAP 9: Go info disclosure (error struct to response)
+  # ============================================================
+  - id: go.security.info-disclosure.error-to-response
+    patterns:
+      - pattern-either:
+          - pattern: fmt.Fprintf($W, "%+v", $ERR)
+          - pattern: fmt.Fprintf($W, "%#v", $ERR)
+          - pattern: fmt.Fprintf($W, "%v", $ERR)
+      - metavariable-regex:
+          metavariable: $ERR
+          regex: (?i)(err|error|e)
+    message: >
+      Writing error details to HTTP response exposes internals. Return generic errors.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-209"]
+      confidence: MEDIUM
+
+  # ============================================================
+  # GAP 10: PHP var_dump server/env
+  # ============================================================
+  - id: php.security.info-disclosure.dump-superglobals
+    patterns:
+      - pattern-either:
+          - pattern: var_dump($_SERVER)
+          - pattern: var_dump($_ENV)
+          - pattern: print_r($_SERVER)
+          - pattern: print_r($_ENV)
+    message: >
+      Dumping $_SERVER/$_ENV exposes server config. Remove from production.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-215"]
+      confidence: HIGH
+
+  # ============================================================
+  # GAP 11: Node.js VM sandbox escape
+  # ============================================================
+  - id: js.security.sandbox-escape.vm-module
+    patterns:
+      - pattern-either:
+          - pattern: vm.runInNewContext(...)
+          - pattern: vm.runInContext(...)
+          - pattern: vm.runInThisContext(...)
+          - pattern: new vm.Script(...)
+    message: >
+      Node.js vm module is NOT a security sandbox. Use isolated-vm or separate process.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-265"]
+      confidence: HIGH
+
+  # ============================================================
+  # GAP 12: CORS reflected origin (Python + PHP + JS)
+  # ============================================================
+
+  # Python
+  - id: python.security.cors.reflect-origin
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $RESP.headers["Access-Control-Allow-Origin"] = request.headers.get("Origin")
+          - pattern: |
+              $RESP["Access-Control-Allow-Origin"] = request.environ.get("HTTP_ORIGIN")
+    message: >
+      Reflecting Origin header in CORS. Validate against trusted allowlist.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-942"]
+      confidence: HIGH
+
+  # PHP
+  - id: php.security.cors.reflect-origin
+    pattern: |
+      header("Access-Control-Allow-Origin: " . $_SERVER["HTTP_ORIGIN"])
+    message: >
+      Reflecting Origin in CORS allows any origin. Validate first.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-942"]
+      confidence: HIGH
+
+  # JS additional pattern
+  - id: js.security.cors.reflect-origin-header
+    pattern: |
+      $RES.header("Access-Control-Allow-Origin", $REQ.headers.origin)
+    message: >
+      Reflecting Origin in CORS. Validate against trusted domains.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-942"]
+      confidence: HIGH
+
+  # ============================================================
+  # GAP 13: Prototype pollution taint mode
+  # ============================================================
+  - id: js.security.prototype-pollution.user-key-taint
+    mode: taint
+    severity: WARNING
+    languages: [javascript, typescript]
+    message: >
+      User input used as object key may enable prototype pollution via __proto__.
+    metadata:
+      cwe: ["CWE-1321"]
+      confidence: MEDIUM
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: req.query.$PARAM
+      - pattern: req.body.$PARAM
+      - pattern: req.params.$PARAM
+    pattern-sinks:
+      - pattern: $OBJ[$SINK] = ...
+
+  # ============================================================
+  # GAP 14: Go sensitive data logging
+  # ============================================================
+  - id: go.security.sensitive-data.log-credentials
+    patterns:
+      - pattern-either:
+          - pattern: fmt.Printf("...", ..., $SENSITIVE, ...)
+          - pattern: log.Printf("...", ..., $SENSITIVE, ...)
+          - pattern: fmt.Println(..., $SENSITIVE, ...)
+      - metavariable-regex:
+          metavariable: $SENSITIVE
+          regex: (?i)(password|passwd|pass|secret|token|key|credential|dsn)
+    message: >
+      Sensitive data logged. Remove credentials from log statements.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-532"]
+      confidence: MEDIUM
+
+  # ============================================================
+  # GAP 15: Go timing attack
+  # ============================================================
+  - id: go.security.timing.string-compare-secret
+    patterns:
+      - pattern: |
+          $A == $B
+      - metavariable-regex:
+          metavariable: $A
+          regex: (?i)(token|secret|key|password|hash|hmac|signature|apiKey|api_key|nonce|expected)
+    message: >
+      String comparison with == is not constant-time. Use subtle.ConstantTimeCompare().
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-208"]
+      confidence: MEDIUM
+
+  # ============================================================
+  # GAP 16: PHP sensitive data in error_log
+  # ============================================================
+  - id: php.security.sensitive-data.error-log-interpolation
+    pattern-regex: "error_log\\s*\\(.*\\$(password|pass|card|cvv|secret|token|key).*\\)"
+    message: >
+      Sensitive data in error_log(). Remove credentials from logs.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-532"]
+      confidence: MEDIUM

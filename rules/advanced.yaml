@@ -1,0 +1,1800 @@
+rules:
+  # =======================================================
+  # ADVANCED SECURITY RULES
+  # Covers: JavaScript, TypeScript, Python, Go, PHP
+  # Complements default.yaml — no overlapping rule IDs
+  # =======================================================
+
+  # =======================================================
+  # 1. SQL Injection — Advanced Patterns
+  # =======================================================
+
+  - id: javascript.security.sqli.template-literal
+    pattern-regex: "(?:query|execute|raw|sequelize\\.query|knex\\.raw)\\s*\\(\\s*`[^`]*\\$\\{"
+    message: >
+      SQL query built with template literal interpolation. Template literals
+      with ${...} are just as dangerous as string concatenation for SQL injection.
+      Use parameterized queries with placeholder arguments.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  - id: python.security.sqli.format-string
+    patterns:
+      - pattern-either:
+          - pattern: $DB.execute($X.format(...))
+          - pattern: $DB.execute($X % (...))
+          - pattern: cursor.execute($X.format(...))
+          - pattern: cursor.execute($X % (...))
+      - pattern-not: cursor.execute($X, (...))
+      - pattern-not: $DB.execute($X, (...))
+    message: >
+      SQL query built with str.format() or % formatting. These are vulnerable
+      to SQL injection. Use parameterized queries with placeholder arguments.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    paths:
+      exclude:
+        - "**/__tests__/**"
+        - "**/test/**"
+        - "**/tests/**"
+
+  - id: go.security.sqli.sprintf-query
+    pattern: |
+      $DB.Query(fmt.Sprintf($FMT, ...), ...)
+    message: >
+      SQL query built with fmt.Sprintf is vulnerable to SQL injection.
+      Use parameterized queries: db.Query("SELECT ... WHERE id = ?", id).
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  - id: go.security.sqli.sprintf-exec
+    pattern: |
+      $DB.Exec(fmt.Sprintf($FMT, ...), ...)
+    message: >
+      SQL statement built with fmt.Sprintf is vulnerable to SQL injection.
+      Use parameterized queries with placeholder arguments.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  - id: python.security.sqli.orm-raw-query
+    patterns:
+      - pattern-either:
+          - pattern: $MODEL.objects.raw($X + ...)
+          - pattern: $MODEL.objects.raw(f"...")
+          - pattern: $MODEL.objects.extra(where=[$X + ...])
+          - pattern: connection.cursor().execute($X + ...)
+      - pattern-not: $MODEL.objects.raw($X, [...])
+    message: >
+      Django ORM raw query with string concatenation or f-string. Even when
+      using an ORM, raw queries must use parameterized arguments.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+
+  - id: php.security.sqli.pdo-interpolation
+    patterns:
+      - pattern-either:
+          - pattern: $PDO->query("...$VAR...")
+          - pattern: $PDO->exec("...$VAR...")
+          - pattern: $STMT = $PDO->prepare("..." . $INPUT . "...")
+    message: >
+      SQL query with variable interpolation or concatenation in PDO call.
+      Use prepared statements with bound parameters via prepare() and execute().
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # =======================================================
+  # 2. XSS — Advanced Patterns
+  # =======================================================
+
+  - id: javascript.security.xss.outerhtml
+    pattern: |
+      $X.outerHTML = ...
+    message: >
+      Setting outerHTML with dynamic data can lead to XSS. Use safe DOM
+      APIs like textContent or createElement with proper escaping.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  - id: javascript.security.xss.insertadjacenthtml
+    pattern: |
+      $X.insertAdjacentHTML($POS, $DATA)
+    message: >
+      insertAdjacentHTML() inserts raw HTML and can lead to XSS if data
+      is user-controlled. Use textContent or a sanitization library like DOMPurify.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+
+  - id: javascript.security.xss.response-write
+    patterns:
+      - pattern-either:
+          - pattern: $RES.write($INPUT + ...)
+          - pattern: $RES.send("<..." + $INPUT + "...")
+      - pattern-not: $RES.send(JSON.stringify(...))
+    message: >
+      Writing user input directly to HTTP response may cause reflected XSS.
+      Use a template engine with auto-escaping or explicitly escape output.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+    options:
+      symbolic_propagation: true
+
+  - id: go.security.xss.write-response
+    patterns:
+      - pattern-either:
+          - pattern: $W.Write([]byte($INPUT))
+          - pattern: io.WriteString($W, $INPUT)
+    message: >
+      Writing user input directly to HTTP ResponseWriter without escaping
+      may cause XSS. Use html/template or html.EscapeString().
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+
+  - id: php.security.xss.printf
+    patterns:
+      - pattern-either:
+          - pattern: printf("...", $INPUT)
+          - pattern: sprintf("...", $INPUT)
+    message: >
+      Outputting user input in HTML context without escaping. Use
+      htmlspecialchars($input, ENT_QUOTES, 'UTF-8') before output.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+
+  - id: python.security.xss.flask-markup
+    patterns:
+      - pattern-either:
+          - pattern: Markup($INPUT)
+          - pattern: Markup($X + $INPUT)
+    message: >
+      Flask Markup() marks strings as safe HTML, bypassing auto-escaping.
+      If $INPUT contains user data, this creates an XSS vulnerability.
+      Use Markup.escape() on user input before wrapping in Markup().
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # =======================================================
+  # 3. Command Injection — Advanced Patterns
+  # =======================================================
+
+  - id: python.security.cmdi.os-popen
+    patterns:
+      - pattern-either:
+          - pattern: os.popen($CMD + ...)
+          - pattern: os.popen($CMD.format(...))
+    message: >
+      os.popen() with user-controlled input enables command injection.
+      Use subprocess.run() with a list of arguments instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+
+  - id: javascript.security.cmdi.child-process-template
+    pattern-regex: "(?:execSync|spawnSync)\\s*\\(\\s*`[^`]*\\$\\{"
+    message: >
+      Shell command built with template literal interpolation in child_process call.
+      Use execFile or spawn with an argument array to prevent command injection.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  - id: php.security.cmdi.backtick
+    pattern-regex: "`[^`]*\\$[a-zA-Z_]"
+    message: >
+      PHP backtick operator with variable interpolation runs shell commands.
+      This is equivalent to shell_exec() and is vulnerable to command injection.
+      Use escapeshellarg() or avoid shell commands entirely.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  - id: php.security.cmdi.proc-open
+    pattern: |
+      proc_open($CMD, ...)
+    message: >
+      proc_open() runs a command and opens file pointers for I/O.
+      Ensure command arguments are properly escaped with escapeshellarg()
+      or use a safer alternative.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+
+  - id: go.security.cmdi.variable-command
+    pattern: |
+      exec.Command($CMD, ...)
+    message: >
+      exec.Command with a variable command name may allow command injection
+      if the command or arguments are user-controlled. Validate command
+      names against an allowlist.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+
+  # =======================================================
+  # 4. Path Traversal — Advanced Patterns
+  # =======================================================
+
+  - id: javascript.security.path-traversal.path-join-input
+    patterns:
+      - pattern-either:
+          - pattern: $FS.readFileSync(path.join(..., $INPUT), ...)
+          - pattern: $FS.readFile(path.join(..., $INPUT), ...)
+          - pattern: $FS.writeFileSync(path.join(..., $INPUT), ...)
+          - pattern: $FS.createReadStream(path.join(..., $INPUT))
+      - pattern-not: $FS.readFileSync(path.join(..., "..."), ...)
+      - pattern-not: $FS.readFile(path.join(..., "..."), ...)
+    message: >
+      path.join() does not prevent path traversal. Input like "../../../etc/passwd"
+      passes through path.join unchanged. Validate that the resolved path
+      is within the intended directory using path.resolve() and startsWith().
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: MEDIUM
+    options:
+      symbolic_propagation: true
+
+  - id: python.security.path-traversal.pathlib-user-input
+    patterns:
+      - pattern-either:
+          - pattern: Path($BASE / $INPUT).read_text()
+          - pattern: Path($BASE / $INPUT).read_bytes()
+          - pattern: Path($BASE / $INPUT).open(...)
+          - pattern: pathlib.Path($INPUT).read_text()
+    message: >
+      File path constructed with user input may allow path traversal.
+      Resolve the path and verify it starts with the intended base directory.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: MEDIUM
+
+  - id: go.security.path-traversal.filepath-join
+    patterns:
+      - pattern-either:
+          - pattern: os.ReadFile(filepath.Join(..., $INPUT))
+          - pattern: os.Open(filepath.Join(..., $INPUT))
+          - pattern: os.Create(filepath.Join(..., $INPUT))
+    message: >
+      filepath.Join() does not prevent path traversal. After joining, use
+      filepath.Rel() or strings.HasPrefix() with the cleaned base path
+      to verify the result stays within the intended directory.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: MEDIUM
+
+  - id: php.security.path-traversal.include-superglobal
+    patterns:
+      - pattern-either:
+          - pattern: include($_GET[$KEY])
+          - pattern: include($_POST[$KEY])
+          - pattern: include($_REQUEST[$KEY])
+          - pattern: require($_GET[$KEY])
+          - pattern: require($_POST[$KEY])
+    message: >
+      Including files based on user input ($_GET/$_POST) allows Local File
+      Inclusion (LFI) and potentially Remote File Inclusion (RFI).
+      Use an allowlist of permitted file names.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-98"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # =======================================================
+  # 5. SSRF — Advanced Patterns
+  # =======================================================
+
+  - id: javascript.security.ssrf.http-methods
+    patterns:
+      - pattern-either:
+          - pattern: axios($CONFIG)
+          - pattern: axios.request($CONFIG)
+          - pattern: $HTTP.get($URL, ...)
+          - pattern: $HTTP.post($URL, ...)
+          - pattern: $HTTP.put($URL, ...)
+          - pattern: $HTTP.delete($URL, ...)
+      - pattern-not: $HTTP.get("...", ...)
+      - pattern-not: $HTTP.post("...", ...)
+    message: >
+      HTTP request with variable URL. If the URL is user-controlled, this
+      may allow Server-Side Request Forgery (SSRF). Validate against an
+      allowlist and block internal/private IP ranges (10.x, 172.16.x, 192.168.x, 127.x).
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: MEDIUM
+    options:
+      symbolic_propagation: true
+
+  - id: python.security.ssrf.urllib-httpx
+    patterns:
+      - pattern-either:
+          - pattern: urllib.request.urlopen($URL)
+          - pattern: urllib.request.Request($URL)
+          - pattern: httpx.get($URL, ...)
+          - pattern: httpx.post($URL, ...)
+          - pattern: aiohttp.ClientSession().get($URL)
+      - pattern-not: urllib.request.urlopen("...")
+      - pattern-not: httpx.get("...", ...)
+    message: >
+      HTTP request with variable URL may allow SSRF. Validate and allowlist
+      destination URLs. Block internal and private IP ranges.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: MEDIUM
+    options:
+      symbolic_propagation: true
+
+  - id: go.security.ssrf.http-newrequest
+    patterns:
+      - pattern-either:
+          - pattern: http.NewRequest($METHOD, $URL, ...)
+          - pattern: http.NewRequestWithContext($CTX, $METHOD, $URL, ...)
+      - pattern-not: http.NewRequest($METHOD, "...", ...)
+    message: >
+      HTTP request constructed with variable URL. If the URL is user-controlled,
+      this may allow SSRF. Validate against an allowlist and resolve the URL
+      to verify it does not target internal infrastructure.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: MEDIUM
+    options:
+      symbolic_propagation: true
+
+  - id: php.security.ssrf.curl-variable
+    patterns:
+      - pattern-either:
+          - pattern: curl_setopt($CH, CURLOPT_URL, $URL)
+          - pattern: fopen($URL, "r")
+    message: >
+      HTTP request with user-controlled URL may allow SSRF. Validate and
+      allowlist URLs before making requests. Block internal IP ranges.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: MEDIUM
+
+  # =======================================================
+  # 6. Hardcoded Secrets — Advanced Patterns
+  # =======================================================
+
+  - id: generic.security.secrets.api-key-pattern
+    pattern-regex: "(?:sk-[a-zA-Z0-9]{20,}|AKIA[A-Z0-9]{16}|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{22,})"
+    message: >
+      Detected a hardcoded API key or token pattern (OpenAI sk-*, AWS AKIA*,
+      GitHub ghp_*/gho_*/github_pat_*). Remove from source code and use
+      environment variables or a secrets manager.
+    languages: [javascript, typescript, python, go, php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-798"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+    paths:
+      exclude:
+        - "**/__tests__/**"
+        - "**/test/**"
+        - "**/tests/**"
+        - "**/__fixtures__/**"
+
+  - id: generic.security.secrets.connection-string
+    pattern-regex: "(?:mongodb|postgres|mysql|redis|amqp)(?:ql)?://[^:]+:[^@]+@"
+    message: >
+      Detected a connection string with embedded credentials. Store connection
+      strings in environment variables or a secrets manager. Never commit
+      credentials to source control.
+    languages: [javascript, typescript, python, go, php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-798"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+    paths:
+      exclude:
+        - "**/__tests__/**"
+        - "**/test/**"
+        - "**/tests/**"
+        - "**/__fixtures__/**"
+
+  - id: generic.security.secrets.private-key-header
+    pattern-regex: "-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
+    message: >
+      Detected an embedded private key in source code. Private keys must
+      be stored in secure key management systems, not in source files.
+    languages: [javascript, typescript, python, go, php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-321"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+    paths:
+      exclude:
+        - "**/__tests__/**"
+        - "**/test/**"
+        - "**/tests/**"
+        - "**/__fixtures__/**"
+
+  - id: generic.security.secrets.jwt-secret-literal
+    patterns:
+      - pattern-either:
+          - pattern: jwt.sign($PAYLOAD, "...", ...)
+          - pattern: jwt.verify($TOKEN, "...", ...)
+          - pattern: jwt.encode($PAYLOAD, "...", ...)
+          - pattern: jwt.decode($TOKEN, "...", ...)
+    message: >
+      JWT secret is hardcoded as a string literal. Use an environment variable
+      or key management service for JWT signing secrets.
+    languages: [javascript, typescript, python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-798"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+
+  - id: go.security.secrets.config-struct-password
+    patterns:
+      - pattern: |
+          $VAR := &$TYPE{..., Password: "...", ...}
+    message: >
+      Hardcoded password in struct initialization. Use environment variables
+      or a secrets manager to supply credentials at runtime.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-798"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+
+  # =======================================================
+  # 7. Weak Cryptography — Advanced Patterns
+  # =======================================================
+
+  - id: python.security.crypto.des-cipher
+    patterns:
+      - pattern-either:
+          - pattern: DES.new(...)
+          - pattern: DES3.new(...)
+          - pattern: ARC4.new(...)
+          - pattern: Blowfish.new(...)
+    message: >
+      DES, 3DES, RC4, and Blowfish are deprecated ciphers. Use AES-256-GCM
+      via AES.new() with MODE_GCM.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-327"]
+      owasp: ["A02:2021"]
+      confidence: HIGH
+    fix: AES.new($KEY, AES.MODE_GCM)
+
+  - id: go.security.crypto.sha1-sum
+    pattern: |
+      sha1.Sum(...)
+    message: >
+      SHA1 is cryptographically broken and should not be used for security
+      purposes. Use sha256.Sum256() or stronger.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-328"]
+      owasp: ["A02:2021"]
+      confidence: HIGH
+    fix: sha256.Sum256(...)
+
+  - id: go.security.crypto.md5-new
+    pattern: |
+      md5.New()
+    message: >
+      MD5 is cryptographically broken. Use sha256.New() or stronger
+      for integrity checks. Use bcrypt or argon2 for passwords.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-328"]
+      owasp: ["A02:2021"]
+      confidence: HIGH
+    fix: sha256.New()
+
+  - id: php.security.crypto.mt-rand
+    pattern: |
+      mt_rand(...)
+    message: >
+      mt_rand() uses the Mersenne Twister algorithm which is not
+      cryptographically secure. Use random_int() or random_bytes()
+      for security-sensitive values.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-330"]
+      owasp: ["A02:2021"]
+      confidence: MEDIUM
+    fix: random_int(...)
+
+  - id: javascript.security.crypto.weak-pbkdf2-iterations
+    pattern-regex: "pbkdf2(?:Sync)?\\([^)]*,\\s*(?:[1-9]\\d{0,3}|[1-4]\\d{4}|50000)\\s*[,)]"
+    message: >
+      PBKDF2 with fewer than 100,000 iterations is insufficient for password
+      hashing. Use at least 600,000 iterations (OWASP 2023) or switch to
+      bcrypt/argon2.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-916"]
+      owasp: ["A02:2021"]
+      confidence: MEDIUM
+
+  # =======================================================
+  # 8. Insecure Deserialization — Advanced Patterns
+  # =======================================================
+
+  - id: python.security.deserialization.shelve-open
+    pattern: |
+      shelve.open(...)
+    message: >
+      shelve.open() uses pickle internally and can run arbitrary code
+      when loading untrusted data. Use a safe serialization format like JSON.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502"]
+      owasp: ["A08:2021"]
+      confidence: HIGH
+    paths:
+      exclude:
+        - "**/__tests__/**"
+        - "**/test/**"
+        - "**/tests/**"
+
+  - id: python.security.deserialization.marshal-loads
+    pattern: |
+      marshal.loads(...)
+    message: >
+      marshal.loads() can run arbitrary code when deserializing untrusted
+      data. Use JSON or another safe serialization format.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502"]
+      owasp: ["A08:2021"]
+      confidence: HIGH
+
+  - id: javascript.security.deserialization.node-serialize
+    patterns:
+      - pattern-either:
+          - pattern: serialize.unserialize(...)
+          - pattern: $MOD.unserialize(...)
+    message: >
+      node-serialize unserialize() can run arbitrary code via crafted
+      serialized objects containing function expressions.
+      Use JSON.parse() for data deserialization.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502"]
+      owasp: ["A08:2021"]
+      confidence: HIGH
+
+  - id: php.security.deserialization.unserialize-user-input
+    patterns:
+      - pattern-either:
+          - pattern: unserialize($_GET[$KEY])
+          - pattern: unserialize($_POST[$KEY])
+          - pattern: unserialize($_REQUEST[$KEY])
+          - pattern: unserialize($_COOKIE[$KEY])
+    message: >
+      Calling unserialize() on user input directly from superglobals enables
+      PHP Object Injection attacks. Use json_decode() for data interchange.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502"]
+      owasp: ["A08:2021"]
+      confidence: HIGH
+
+  - id: go.security.deserialization.gob-decode
+    pattern: |
+      gob.NewDecoder($INPUT).Decode(...)
+    message: >
+      Decoding untrusted data with gob may lead to unexpected behavior or
+      denial of service. Validate and restrict the types that can be decoded.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-502"]
+      owasp: ["A08:2021"]
+      confidence: MEDIUM
+
+  # =======================================================
+  # 9. Open Redirect — Advanced Patterns
+  # =======================================================
+
+  - id: javascript.security.open-redirect.location-assign
+    patterns:
+      - pattern-either:
+          - pattern: window.location.assign($URL)
+          - pattern: window.location.replace($URL)
+          - pattern: document.location = $URL
+          - pattern: document.location.href = $URL
+    message: >
+      Assigning user-controlled values to document.location or calling
+      window.location.assign/replace enables open redirect attacks.
+      Validate redirect URLs against a trusted domain allowlist.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: MEDIUM
+
+  - id: python.security.open-redirect.flask-redirect-request
+    patterns:
+      - pattern-either:
+          - pattern: redirect(request.args.get(...))
+          - pattern: redirect(request.form.get(...))
+          - pattern: redirect(request.args[...])
+    message: >
+      Flask redirect with URL from request parameters enables open redirect.
+      Validate the redirect URL or use url_for() for internal redirects.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+
+  - id: python.security.open-redirect.django-httpresponse
+    pattern: |
+      HttpResponseRedirect($URL)
+    message: >
+      Django HttpResponseRedirect with user-controlled URL may allow open
+      redirect. Validate the URL against trusted domains or use reverse()
+      for internal redirects.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: MEDIUM
+
+  - id: go.security.open-redirect.header-location
+    pattern: |
+      $W.Header().Set("Location", $URL)
+    message: >
+      Setting Location header with user-controlled URL enables open redirect.
+      Validate the URL against a trusted domain allowlist.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: MEDIUM
+
+  # =======================================================
+  # 10. Sensitive Data Exposure — Advanced Patterns
+  # =======================================================
+
+  - id: go.security.sensitive-data.fmt-print-credentials
+    patterns:
+      - pattern-either:
+          - pattern: fmt.Println(..., $SENSITIVE, ...)
+          - pattern: fmt.Printf(..., $SENSITIVE, ...)
+          - pattern: log.Println(..., $SENSITIVE, ...)
+          - pattern: log.Printf(..., $SENSITIVE, ...)
+      - metavariable-regex:
+          metavariable: $SENSITIVE
+          regex: (?i)(password|passwd|secret|token|apiKey|api_key|cvv|ssn|cardNumber|card_number)
+    message: >
+      Sensitive data is being logged via fmt/log package. Remove credentials,
+      tokens, and PII from log output to prevent data exposure.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-532"]
+      owasp: ["A09:2021"]
+      confidence: HIGH
+
+  - id: python.security.sensitive-data.logging-credentials
+    patterns:
+      - pattern-either:
+          - pattern: logging.info(..., $SENSITIVE, ...)
+          - pattern: logging.debug(..., $SENSITIVE, ...)
+          - pattern: logging.warning(..., $SENSITIVE, ...)
+          - pattern: logging.error(..., $SENSITIVE, ...)
+          - pattern: $LOGGER.info(..., $SENSITIVE, ...)
+          - pattern: $LOGGER.debug(..., $SENSITIVE, ...)
+      - metavariable-regex:
+          metavariable: $SENSITIVE
+          regex: (?i)(password|passwd|secret|token|api_key|cvv|ssn|credit_card)
+    message: >
+      Sensitive data is being written to application logs. Remove credentials
+      and PII from log statements. Mask or redact sensitive values.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-532"]
+      owasp: ["A09:2021"]
+      confidence: HIGH
+
+  - id: javascript.security.sensitive-data.console-methods
+    patterns:
+      - pattern-either:
+          - pattern: console.error(..., $SENSITIVE, ...)
+          - pattern: console.warn(..., $SENSITIVE, ...)
+          - pattern: console.debug(..., $SENSITIVE, ...)
+          - pattern: console.info(..., $SENSITIVE, ...)
+      - metavariable-regex:
+          metavariable: $SENSITIVE
+          regex: (?i)(password|secret|token|cvv|ssn|creditCard|credit_card|apiKey|api_key)
+    message: >
+      Sensitive data logged via console methods. Remove credentials and PII
+      from all log output in production code.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-532"]
+      owasp: ["A09:2021"]
+      confidence: HIGH
+
+  - id: python.security.sensitive-data.flask-debug
+    pattern: |
+      $APP.run(..., debug=True, ...)
+    message: >
+      Flask debug mode exposes the interactive debugger and reloader in
+      production, allowing arbitrary code evaluation. Set debug=False
+      in production.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-215"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+    fix: $APP.run(..., debug=False, ...)
+
+  - id: php.security.sensitive-data.var-dump-sensitive
+    patterns:
+      - pattern-either:
+          - pattern: var_dump($SENSITIVE)
+          - pattern: print_r($SENSITIVE)
+      - metavariable-regex:
+          metavariable: $SENSITIVE
+          regex: (?i)(password|secret|token|api_key|cvv|ssn|card)
+    message: >
+      var_dump()/print_r() of sensitive data may expose credentials in output.
+      Remove debug output of sensitive variables from production code.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-532"]
+      owasp: ["A09:2021"]
+      confidence: HIGH
+
+  # =======================================================
+  # 11. Timing Attacks — Advanced Patterns
+  # =======================================================
+
+  - id: go.security.timing-attack.string-compare
+    patterns:
+      - pattern: |
+          $A == $B
+      - metavariable-regex:
+          metavariable: $A
+          regex: (?i)(token|secret|key|password|hash|hmac|signature|apiKey|api_key|nonce)
+    message: >
+      String comparison with == is not constant-time and may be vulnerable
+      to timing attacks. Use crypto/subtle.ConstantTimeCompare() instead.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-208"]
+      confidence: MEDIUM
+
+  - id: php.security.timing-attack.string-compare
+    patterns:
+      - pattern-either:
+          - pattern: $A == $B
+          - pattern: $A === $B
+          - pattern: strcmp($A, $B)
+      - metavariable-regex:
+          metavariable: $A
+          regex: (?i)(token|secret|key|password|hash|hmac|signature|api_key|nonce)
+    message: >
+      String comparison operators and strcmp() are not constant-time. Use
+      hash_equals() for timing-safe secret comparison.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-208"]
+      confidence: MEDIUM
+
+  - id: javascript.security.timing-attack.loose-compare
+    patterns:
+      - pattern: |
+          $A == $B
+      - metavariable-regex:
+          metavariable: $A
+          regex: (?i)(provided|supplied|given|user|input|received).*(token|secret|key|hash|hmac)
+    message: >
+      Comparing secrets with == is not constant-time. Use
+      crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)) instead.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-208"]
+      confidence: MEDIUM
+
+  # =======================================================
+  # 12. Insecure Cookies — Advanced Patterns
+  # =======================================================
+
+  - id: javascript.security.cookie.samesite-none
+    pattern: |
+      $RES.cookie($NAME, $VAL, {..., sameSite: "none", ...})
+    message: >
+      Cookie with SameSite=None allows cross-site requests and may enable
+      CSRF attacks. Set sameSite to "strict" or "lax" unless cross-site
+      functionality is explicitly required (and secure: true is also set).
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-1275"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+
+  - id: python.security.cookie.insecure-flags
+    patterns:
+      - pattern-either:
+          - pattern: $RESP.set_cookie(..., httponly=False, ...)
+          - pattern: $RESP.set_cookie(..., secure=False, ...)
+          - pattern: $RESP.set_cookie(..., samesite="None", ...)
+    message: >
+      Cookie set without secure flags. Set httponly=True, secure=True,
+      and samesite="Lax" or "Strict" for session and sensitive cookies.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-614"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+
+  - id: php.security.cookie.setcookie-review
+    patterns:
+      - pattern-either:
+          - pattern: setcookie($NAME, $VAL, ...)
+          - pattern: setrawcookie($NAME, $VAL, ...)
+    message: >
+      Verify cookie is set with secure flags. Use setcookie() with httponly,
+      secure, and samesite parameters. For PHP 7.3+, pass an options array
+      with 'httponly' => true, 'secure' => true, 'samesite' => 'Lax'.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-614"]
+      owasp: ["A05:2021"]
+      confidence: MEDIUM
+
+  - id: go.security.cookie.insecure-flags
+    patterns:
+      - pattern: |
+          &http.Cookie{..., HttpOnly: false, ...}
+    message: >
+      Cookie created without HttpOnly flag. Set HttpOnly: true to prevent
+      JavaScript access, Secure: true for HTTPS-only, and SameSite to
+      http.SameSiteStrictMode or http.SameSiteLaxMode.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-614"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+
+  # =======================================================
+  # 13. CORS Misconfiguration — Advanced Patterns
+  # =======================================================
+
+  - id: javascript.security.cors.wildcard-origin
+    patterns:
+      - pattern-either:
+          - pattern: $RES.setHeader("Access-Control-Allow-Origin", "*")
+          - pattern: $RES.header("Access-Control-Allow-Origin", "*")
+    message: >
+      CORS policy allows all origins. This enables any website to make
+      authenticated cross-origin requests. Restrict to specific trusted domains.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-942"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+
+  - id: javascript.security.cors.reflect-origin
+    pattern: |
+      $RES.setHeader("Access-Control-Allow-Origin", $REQ.headers.origin)
+    message: >
+      Reflecting the request Origin header in Access-Control-Allow-Origin
+      without validation allows any origin to access the API. Validate
+      the origin against a trusted allowlist.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-942"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+
+  - id: go.security.cors.wildcard-origin
+    pattern: |
+      $W.Header().Set("Access-Control-Allow-Origin", "*")
+    message: >
+      CORS wildcard allows any origin to make cross-origin requests.
+      Restrict to specific trusted domains.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-942"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+
+  - id: php.security.cors.wildcard-origin
+    pattern: |
+      header("Access-Control-Allow-Origin: *")
+    message: >
+      CORS wildcard allows any origin to make cross-origin requests.
+      Restrict to specific trusted domains.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-942"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+
+  # =======================================================
+  # 14. Prototype Pollution — Advanced Patterns
+  # =======================================================
+
+  - id: javascript.security.prototype-pollution.object-assign
+    patterns:
+      - pattern-either:
+          - pattern: Object.assign($TARGET, $INPUT)
+          - pattern: Object.assign({}, $INPUT)
+    message: >
+      Object.assign() with user-controlled input may enable prototype pollution
+      if the input contains __proto__ or constructor properties. Sanitize input
+      by removing dangerous keys or use a library with prototype pollution
+      protection.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-1321"]
+      confidence: MEDIUM
+
+  - id: javascript.security.prototype-pollution.bracket-assignment
+    patterns:
+      - pattern: |
+          $OBJ[$KEY1][$KEY2] = $VAL
+    message: >
+      Nested bracket property assignment with dynamic keys may enable
+      prototype pollution (e.g., obj["__proto__"]["polluted"] = true).
+      Validate that keys are not "__proto__", "constructor", or "prototype".
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-1321"]
+      confidence: MEDIUM
+
+  - id: javascript.security.prototype-pollution.deep-merge
+    patterns:
+      - pattern-either:
+          - pattern: $LODASH.merge($TARGET, $INPUT)
+          - pattern: $LODASH.defaultsDeep($TARGET, $INPUT)
+    message: >
+      Deep merge operations with user-controlled input may enable prototype
+      pollution. Ensure the merge library version has prototype pollution
+      protection or sanitize input keys.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-1321"]
+      confidence: MEDIUM
+
+  # =======================================================
+  # 15. NoSQL Injection — Advanced Patterns
+  # =======================================================
+
+  - id: javascript.security.nosqli.mongodb-findone
+    pattern: |
+      $DB.collection($C).findOne($INPUT)
+    message: >
+      Passing user input directly to MongoDB findOne() may allow NoSQL injection.
+      Validate query objects and reject $ operators from user input.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-943"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+
+  - id: javascript.security.nosqli.mongodb-update-delete
+    patterns:
+      - pattern-either:
+          - pattern: $DB.collection($C).updateOne($FILTER, $INPUT)
+          - pattern: $DB.collection($C).updateMany($FILTER, $INPUT)
+          - pattern: $DB.collection($C).deleteMany($INPUT)
+    message: >
+      Passing user input to MongoDB update/delete operations may allow NoSQL
+      injection. Validate and sanitize query objects. Reject $ operators
+      from user input.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-943"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+
+  - id: javascript.security.nosqli.mongoose-where
+    patterns:
+      - pattern-either:
+          - pattern: $MODEL.where($INPUT)
+          - pattern: "$MODEL.find({$where: $INPUT})"
+    message: >
+      Mongoose $where or where() with user input enables server-side
+      JavaScript evaluation in MongoDB. Never use $where with user data.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-943"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  - id: python.security.nosqli.pymongo-find
+    patterns:
+      - pattern-either:
+          - pattern: $COLLECTION.find($INPUT)
+          - pattern: $COLLECTION.find_one($INPUT)
+          - pattern: $COLLECTION.update_one($INPUT, ...)
+          - pattern: $COLLECTION.delete_many($INPUT)
+    message: >
+      Passing user input directly to PyMongo query methods may allow NoSQL
+      injection. Validate query structure and reject $ operators from user input.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-943"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+
+  # =======================================================
+  # 16. XXE — Advanced Patterns
+  # =======================================================
+
+  - id: python.security.xxe.lxml-parse
+    patterns:
+      - pattern-either:
+          - pattern: etree.parse($INPUT)
+          - pattern: etree.fromstring($INPUT)
+          - pattern: etree.XML($INPUT)
+    message: >
+      lxml etree.parse/fromstring may be vulnerable to XXE if external entity
+      processing is not disabled. Use defusedxml or create a parser with
+      resolve_entities=False and no_network=True.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-611"]
+      owasp: ["A05:2021"]
+      confidence: MEDIUM
+
+  - id: python.security.xxe.minidom-parse
+    patterns:
+      - pattern-either:
+          - pattern: minidom.parse($INPUT)
+          - pattern: minidom.parseString($INPUT)
+          - pattern: xml.dom.minidom.parse($INPUT)
+          - pattern: xml.dom.minidom.parseString($INPUT)
+    message: >
+      xml.dom.minidom is vulnerable to XXE attacks. Use defusedxml.minidom
+      instead, or disable external entity processing.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-611"]
+      owasp: ["A05:2021"]
+      confidence: MEDIUM
+
+  - id: go.security.xxe.xml-decoder
+    pattern: |
+      xml.NewDecoder($INPUT).Decode(...)
+    message: >
+      xml.NewDecoder may process external entities by default. Set
+      decoder.Strict = true and ensure external entity resolution is
+      disabled to prevent XXE attacks.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-611"]
+      owasp: ["A05:2021"]
+      confidence: MEDIUM
+
+  - id: php.security.xxe.domdocument-loadxml
+    patterns:
+      - pattern-either:
+          - pattern: $DOC->loadXML($INPUT, LIBXML_NOENT)
+          - pattern: $DOC->load($INPUT, LIBXML_NOENT)
+          - pattern: simplexml_load_string($INPUT, ..., LIBXML_NOENT, ...)
+    message: >
+      Loading XML with LIBXML_NOENT enables external entity processing,
+      making XXE attacks possible. Remove the LIBXML_NOENT flag and call
+      libxml_disable_entity_loader(true) on PHP < 8.0.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-611"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+
+  - id: javascript.security.xxe.dom-parser
+    patterns:
+      - pattern-either:
+          - pattern: new DOMParser().parseFromString($INPUT, ...)
+          - pattern: $PARSER.parseFromString($INPUT, ...)
+    message: >
+      Parsing user-controlled XML may be vulnerable to XXE if the parser
+      resolves external entities. Ensure external entity loading is disabled.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-611"]
+      owasp: ["A05:2021"]
+      confidence: MEDIUM
+
+  # =======================================================
+  # 17. ReDoS — Advanced Patterns
+  # =======================================================
+
+  - id: python.security.redos.nested-quantifier
+    pattern-regex: "re\\.(?:match|search|findall|sub|compile)\\s*\\([^)]*\\([^)]*[+*][^)]*\\)[+*]"
+    message: >
+      Regular expression with nested quantifiers (e.g., (a+)+) may cause
+      catastrophic backtracking (ReDoS). Simplify the pattern or use
+      the re2 library for linear-time matching.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-1333"]
+      confidence: MEDIUM
+
+  - id: go.security.redos.nested-quantifier
+    pattern-regex: "regexp\\.(?:MustCompile|Compile)\\s*\\([^)]*\\([^)]*[+*][^)]*\\)[+*]"
+    message: >
+      Regular expression with nested quantifiers detected. Go standard library
+      regexp uses RE2 which is safe from backtracking, but verify no third-party
+      regex library is used that may be vulnerable.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-1333"]
+      confidence: MEDIUM
+
+  - id: php.security.redos.nested-quantifier
+    pattern-regex: "preg_(?:match|replace|split)\\s*\\([^)]*\\([^)]*[+*][^)]*\\)[+*]"
+    message: >
+      Regular expression with nested quantifiers may cause catastrophic
+      backtracking (ReDoS). Simplify the pattern and set a pcre.backtrack_limit.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-1333"]
+      confidence: MEDIUM
+
+  # =======================================================
+  # 18. Race Conditions — Go-specific
+  # =======================================================
+
+  - id: go.security.race-condition.shared-map-goroutine
+    patterns:
+      - pattern: |
+          go func(...) {
+            ...
+            $MAP[$KEY] = $VAL
+            ...
+          }(...)
+    message: >
+      Writing to a shared map from a goroutine without synchronization
+      causes a data race. Use sync.Mutex, sync.RWMutex, or sync.Map
+      for concurrent map access.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-362"]
+      confidence: MEDIUM
+    paths:
+      exclude:
+        - "*_test.go"
+
+  - id: go.security.race-condition.shared-variable-goroutine
+    patterns:
+      - pattern: |
+          go func() {
+            ...
+            $VAR = ...
+            ...
+          }()
+      - pattern-not: |
+          go func() {
+            ...
+            $MUTEX.Lock()
+            ...
+          }()
+    message: >
+      Writing to a shared variable in a goroutine without mutex protection
+      may cause a data race. Use sync.Mutex or channels for synchronization.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-362"]
+      confidence: MEDIUM
+
+  - id: go.security.race-condition.waitgroup-add-in-goroutine
+    patterns:
+      - pattern: |
+          go func(...) {
+            ...
+            $WG.Add(...)
+            ...
+          }(...)
+    message: >
+      Calling WaitGroup.Add() inside a goroutine is a race condition.
+      Always call wg.Add() before launching the goroutine.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-362"]
+      confidence: HIGH
+
+  # =======================================================
+  # 19. Zip Slip — Advanced Patterns
+  # =======================================================
+
+  - id: javascript.security.zip-slip.extract-entry
+    patterns:
+      - pattern-either:
+          - pattern: $FS.writeFile(path.join($DIR, $ENTRY.fileName), ...)
+          - pattern: $FS.writeFileSync(path.join($DIR, $ENTRY.fileName), ...)
+          - pattern: $FS.createWriteStream(path.join($DIR, $ENTRY.path))
+    message: >
+      Writing archive entries without validating the entry path may allow
+      Zip Slip. Resolve the full path and verify it starts with the
+      intended target directory before writing.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+
+  - id: python.security.zip-slip.extractall
+    pattern: |
+      $ZIPFILE.extractall(...)
+    message: >
+      ZipFile.extractall() does not validate entry paths and may write files
+      outside the target directory (Zip Slip). Iterate entries and validate
+      each path before extraction, or use a library with built-in protection.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: MEDIUM
+
+  - id: go.security.zip-slip.filepath-join-header
+    pattern: |
+      filepath.Join($DIR, $HEADER.Name)
+    message: >
+      Archive entry name used in filepath.Join without validation may allow
+      Zip Slip. After joining, verify the result starts with the intended
+      target directory using strings.HasPrefix with the cleaned path.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: MEDIUM
+
+  - id: php.security.zip-slip.extract-to
+    pattern: |
+      $ZIP->extractTo($DIR)
+    message: >
+      ZipArchive extractTo() without validating entry names may write
+      files outside the target directory. Iterate entries and validate
+      paths before extraction.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: MEDIUM
+
+  # =======================================================
+  # 20. SSL/TLS Issues — Advanced Patterns
+  # =======================================================
+
+  - id: javascript.security.tls.reject-unauthorized-env
+    pattern: |
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+    message: >
+      Disabling TLS certificate verification via environment variable allows
+      man-in-the-middle attacks. Fix the underlying certificate issue instead.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-295"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+    paths:
+      exclude:
+        - "**/__tests__/**"
+        - "**/test/**"
+        - "**/tests/**"
+
+  - id: javascript.security.tls.agent-reject-unauthorized
+    pattern: |
+      new $AGENT({..., rejectUnauthorized: false, ...})
+    message: >
+      Creating an HTTPS agent with rejectUnauthorized: false disables TLS
+      certificate verification. Fix certificate issues instead of disabling
+      verification.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-295"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+
+  - id: javascript.security.tls.reject-unauthorized-regex
+    pattern-regex: "NODE_TLS_REJECT_UNAUTHORIZED.*['\"]0['\"]"
+    message: >
+      Setting NODE_TLS_REJECT_UNAUTHORIZED=0 disables SSL/TLS certificate
+      verification globally, enabling man-in-the-middle attacks. Fix the
+      certificate chain instead.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-295"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+
+  - id: go.security.tls.insecure-skip-verify
+    pattern: |
+      &tls.Config{..., InsecureSkipVerify: true, ...}
+    message: >
+      InsecureSkipVerify: true disables TLS certificate verification,
+      enabling man-in-the-middle attacks. Remove this setting and configure
+      proper CA certificates.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-295"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+    paths:
+      exclude:
+        - "*_test.go"
+        - "**/__tests__/**"
+        - "**/test/**"
+
+  - id: python.security.tls.verify-false
+    patterns:
+      - pattern-either:
+          - pattern: requests.get($URL, ..., verify=False, ...)
+          - pattern: requests.post($URL, ..., verify=False, ...)
+          - pattern: requests.put($URL, ..., verify=False, ...)
+          - pattern: requests.delete($URL, ..., verify=False, ...)
+          - pattern: $SESSION.verify = False
+    message: >
+      Disabling SSL certificate verification with verify=False enables
+      man-in-the-middle attacks. Fix the certificate chain or provide
+      a custom CA bundle via verify='/path/to/ca-bundle.crt'.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-295"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+    paths:
+      exclude:
+        - "**/__tests__/**"
+        - "**/test/**"
+        - "**/tests/**"
+
+  - id: php.security.tls.curl-verifyhost-disabled
+    patterns:
+      - pattern-either:
+          - pattern: curl_setopt($CH, CURLOPT_SSL_VERIFYHOST, 0)
+          - pattern: curl_setopt($CH, CURLOPT_SSL_VERIFYHOST, false)
+    message: >
+      Disabling CURLOPT_SSL_VERIFYHOST allows man-in-the-middle attacks.
+      Set CURLOPT_SSL_VERIFYHOST to 2 (the default) to verify the SSL
+      certificate matches the hostname.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-295"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+
+  # =======================================================
+  # BONUS: Additional High-Value Patterns
+  # =======================================================
+
+  # --- Mass Assignment ---
+
+  - id: javascript.security.mass-assignment.spread-body
+    patterns:
+      - pattern-either:
+          - pattern: $MODEL.create({...$REQ.body})
+          - pattern: $MODEL.update({...$REQ.body})
+          - pattern: new $MODEL({...$REQ.body})
+    message: >
+      Spreading request body directly into model creation or update enables
+      mass assignment. Attackers can set privileged fields (role, isAdmin).
+      Explicitly pick only allowed fields from the request body.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-915"]
+      owasp: ["A04:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+
+  # --- Unvalidated File Upload ---
+
+  - id: python.security.upload.save-without-validation
+    pattern: |
+      $FILE.save($PATH)
+    message: >
+      Saving uploaded file without validating filename, extension, or content
+      type. Validate file type against an allowlist, generate a safe filename,
+      and scan for malicious content before saving.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-434"]
+      owasp: ["A04:2021"]
+      confidence: MEDIUM
+
+  # --- Code Injection via eval/exec ---
+
+  - id: python.security.injection.dynamic-code
+    patterns:
+      - pattern-either:
+          - pattern: eval($INPUT)
+          - pattern: compile($INPUT, ...)
+      - pattern-not: ast.literal_eval($INPUT)
+    message: >
+      eval()/compile() with dynamic input enables arbitrary code execution.
+      Use ast.literal_eval() for safe evaluation of data literals, or avoid
+      dynamic code evaluation entirely.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+
+  # --- LDAP Injection ---
+
+  - id: python.security.ldap.injection
+    patterns:
+      - pattern-either:
+          - pattern: $CONN.search_s(..., $FILTER + ..., ...)
+          - pattern: $CONN.search(..., $FILTER.format(...), ...)
+    message: >
+      LDAP filter built with string concatenation or formatting enables
+      LDAP injection. Use parameterized LDAP queries or escape special
+      characters with ldap.filter.escape_filter_chars().
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-90"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # --- Header Injection ---
+
+  - id: javascript.security.header-injection.set-header
+    patterns:
+      - pattern-either:
+          - pattern: $RES.setHeader($NAME, $INPUT)
+          - pattern: $RES.header($NAME, $INPUT)
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: (?i).*(location|redirect|set-cookie|x-forwarded).*
+    message: >
+      Setting HTTP headers with user-controlled values may enable header
+      injection or response splitting. Validate and sanitize header values,
+      removing newline characters.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-113"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+
+  # --- Unsafe Regex from User Input ---
+
+  - id: javascript.security.redos.user-regex
+    patterns:
+      - pattern: new RegExp($INPUT)
+      - pattern-not: new RegExp("...")
+    message: >
+      Creating a RegExp from user input may cause ReDoS or regex injection.
+      Escape special characters with a utility function or use a fixed
+      set of allowed patterns.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-1333"]
+      confidence: MEDIUM
+
+  - id: python.security.redos.user-regex
+    patterns:
+      - pattern: re.compile($INPUT)
+      - pattern-not: re.compile("...")
+    message: >
+      Compiling user-controlled input as a regex may cause ReDoS or regex
+      injection. Escape input with re.escape() or use a fixed set of
+      allowed patterns.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-1333"]
+      confidence: MEDIUM
+
+  # --- Session Fixation ---
+
+  - id: javascript.security.session.no-regenerate
+    pattern: |
+      $REQ.session.$KEY = $VAL
+    message: >
+      Setting session values (e.g., after login) without regenerating the
+      session ID may enable session fixation attacks. Call
+      req.session.regenerate() before setting authenticated session data.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-384"]
+      owasp: ["A07:2021"]
+      confidence: MEDIUM
+
+  # --- Server-Side Template Injection ---
+
+  - id: python.security.ssti.jinja2-from-string
+    patterns:
+      - pattern-either:
+          - pattern: Template($INPUT).render(...)
+          - pattern: $ENV.from_string($INPUT).render(...)
+    message: >
+      Creating Jinja2 templates from user-controlled strings enables
+      Server-Side Template Injection (SSTI). Use render_template() with
+      static template files and pass variables via context.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-1336"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+
+  # --- Information Disclosure via Error Messages ---
+
+  - id: javascript.security.info-disclosure.stack-trace-response
+    patterns:
+      - pattern-either:
+          - pattern: $RES.send($ERR.stack)
+          - pattern: "$RES.json({..., stack: $ERR.stack, ...})"
+          - pattern: $RES.status(...).send($ERR.message)
+    message: >
+      Sending error stack traces or detailed error messages to clients
+      exposes internal implementation details. Return generic error
+      messages to clients and log details server-side.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-209"]
+      owasp: ["A09:2021"]
+      confidence: HIGH
+
+  # --- Unsafe JSON Parse via eval ---
+
+  - id: javascript.security.injection.eval-json
+    pattern-regex: "eval\\s*\\(\\s*['\"]?\\(\\s*['\"]?\\s*\\+\\s*"
+    message: >
+      Using eval() to parse JSON enables arbitrary code injection. Always
+      use JSON.parse() instead. Never wrap user input in eval().
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # --- Go HTTP handler without timeout ---
+
+  - id: go.security.dos.server-no-timeout
+    pattern: |
+      &http.Server{..., ReadTimeout: 0, ...}
+    message: >
+      HTTP server with ReadTimeout of 0 has no read deadline, making it
+      vulnerable to slowloris denial-of-service attacks. Set ReadTimeout,
+      WriteTimeout, and IdleTimeout to reasonable values.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-400"]
+      owasp: ["A05:2021"]
+      confidence: MEDIUM
+
+  # --- PHP Dangerous Functions ---
+
+  - id: php.security.injection.assert-string
+    pattern: |
+      assert($INPUT)
+    message: >
+      PHP assert() with string argument evaluates it as PHP code (PHP < 8.0).
+      This enables code injection if $INPUT is user-controlled.
+      Use strict boolean assertions or upgrade to PHP 8.0+.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+
+  - id: php.security.injection.preg-replace-eval
+    pattern-regex: "preg_replace\\s*\\(\\s*['\"][^'\"]*e['\"]"
+    message: >
+      preg_replace() with the /e modifier evaluates the replacement string
+      as PHP code. This is removed in PHP 7.0+. Use preg_replace_callback()
+      instead.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # --- Python subprocess without absolute path ---
+
+  - id: python.security.cmdi.subprocess-relative-path
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.run([$CMD, ...], ...)
+          - pattern: subprocess.Popen([$CMD, ...], ...)
+      - metavariable-regex:
+          metavariable: $CMD
+          regex: "^[a-zA-Z][a-zA-Z0-9_-]*$"
+    message: >
+      Subprocess called with relative command name. If PATH is manipulated,
+      an attacker may substitute a malicious binary. Use absolute paths
+      for system commands.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-426"]
+      confidence: MEDIUM
+
+  # --- Go Unvalidated Redirect via r.URL.Query ---
+
+  - id: go.security.open-redirect.query-param
+    patterns:
+      - pattern-either:
+          - pattern: http.Redirect($W, $R, $R.URL.Query().Get(...), ...)
+          - pattern: http.Redirect($W, $R, $R.FormValue(...), ...)
+    message: >
+      Redirect using URL from query parameter or form value enables open
+      redirect. Validate the destination URL against an allowlist of
+      trusted domains.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+    options:
+      symbolic_propagation: true
+    paths:
+      exclude:
+        - "*_test.go"

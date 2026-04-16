@@ -1,9 +1,19 @@
 rules:
+  # =======================================================
+  # Python rules
+  # =======================================================
+
+  # --- SQL Injection ---
+
   - id: python.lang.security.audit.sql-injection.string-concat
-    pattern: |
-      cursor.execute($X + ...)
+    patterns:
+      - pattern-either:
+          - pattern: cursor.execute($X + ...)
+          - pattern: cursor.execute(f"...", ...)
+          - pattern: $DB.execute($X + ...)
+          - pattern: $DB.execute(f"...", ...)
     message: >
-      Detected SQL query built with string concatenation.
+      Detected SQL query built with string concatenation or f-string.
       Use parameterized queries instead to prevent SQL injection.
     languages: [python]
     severity: ERROR
@@ -11,6 +21,23 @@ rules:
       cwe: ["CWE-89"]
       owasp: ["A03:2021"]
       confidence: HIGH
+
+  # --- XSS / Template Injection ---
+
+  - id: python.lang.security.audit.xss.render-template-string
+    pattern: |
+      render_template_string($X)
+    message: >
+      render_template_string() with user input enables Server-Side Template Injection.
+      Use render_template() with a static template file instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # --- Command Injection ---
 
   - id: python.lang.security.audit.command-injection.os-system
     pattern: |
@@ -25,21 +52,245 @@ rules:
       owasp: ["A03:2021"]
       confidence: HIGH
 
+  - id: python.lang.security.audit.command-injection.subprocess-shell
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.check_output(..., shell=True, ...)
+          - pattern: subprocess.Popen(..., shell=True, ...)
+          - pattern: subprocess.run(..., shell=True, ...)
+          - pattern: subprocess.call(..., shell=True, ...)
+    message: >
+      Using subprocess with shell=True is vulnerable to command injection.
+      Pass arguments as a list without shell=True.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # --- Hardcoded Secrets ---
+
   - id: python.lang.security.audit.hardcoded-secret.secret-key
     patterns:
       - pattern: |
           $VAR = "..."
       - metavariable-regex:
           metavariable: $VAR
-          regex: (?i)(secret|password|api_key|token|private_key)
+          regex: (?i)(SECRET_KEY|AWS_SECRET|AWS_ACCESS|STRIPE_SECRET|SENDGRID_API|DATABASE_URL|API_KEY|PRIVATE_KEY)
     message: >
       Detected hardcoded secret in source code.
       Use environment variables or a secrets manager instead.
     languages: [python]
-    severity: WARNING
+    severity: ERROR
     metadata:
       cwe: ["CWE-798"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+
+  # --- Insecure Deserialization ---
+
+  - id: python.lang.security.audit.deserialization.pickle-loads
+    pattern: |
+      pickle.loads(...)
+    message: >
+      pickle.loads() deserializes untrusted data and can execute arbitrary code.
+      Use JSON or a safe serialization format for untrusted input.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502"]
+      owasp: ["A08:2021"]
+      confidence: HIGH
+
+  - id: python.lang.security.audit.deserialization.yaml-unsafe-load
+    patterns:
+      - pattern-either:
+          - pattern: yaml.load(..., Loader=yaml.Loader)
+          - pattern: yaml.load(..., Loader=yaml.UnsafeLoader)
+          - pattern: yaml.unsafe_load(...)
+    message: >
+      yaml.load() with unsafe Loader can execute arbitrary Python code.
+      Use yaml.safe_load() or Loader=yaml.SafeLoader instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502"]
+      owasp: ["A08:2021"]
+      confidence: HIGH
+
+  # --- Weak Cryptography ---
+
+  - id: python.lang.security.audit.crypto.weak-hash
+    patterns:
+      - pattern-either:
+          - pattern: hashlib.md5(...)
+          - pattern: hashlib.sha1(...)
+    message: >
+      MD5 and SHA1 are cryptographically broken.
+      Use hashlib.sha256() or stronger. Use bcrypt/argon2 for passwords.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-328"]
+      owasp: ["A02:2021"]
+      confidence: HIGH
+
+  - id: python.lang.security.audit.crypto.insecure-random
+    patterns:
+      - pattern-either:
+          - pattern: random.randint(...)
+          - pattern: random.random()
+          - pattern: random.choice(...)
+    message: >
+      The random module is not cryptographically secure.
+      Use secrets.token_hex() or secrets.randbelow() for security-sensitive values.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-330"]
+      owasp: ["A02:2021"]
       confidence: MEDIUM
+
+  # --- Open Redirect ---
+
+  - id: python.lang.security.audit.open-redirect
+    pattern: |
+      redirect($URL)
+    message: >
+      Redirect to a user-controlled URL may allow open redirect attacks.
+      Validate redirect URLs against an allowlist of trusted domains.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: MEDIUM
+
+  # --- SSRF ---
+
+  - id: python.lang.security.audit.ssrf.requests
+    pattern-either:
+      - pattern: $REQUESTS.get($URL, ...)
+      - pattern: $REQUESTS.post($URL, ...)
+      - pattern: $REQUESTS.put($URL, ...)
+    message: >
+      HTTP request to a user-controlled URL may allow SSRF.
+      Validate and allowlist URLs. Block internal/private IP ranges.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: MEDIUM
+
+  # --- Sensitive Data Exposure ---
+
+  - id: python.lang.security.audit.sensitive-data.print-credentials
+    patterns:
+      - pattern-either:
+          - pattern: print(f"...{$SENSITIVE}...")
+          - pattern: print(..., $SENSITIVE, ...)
+      - metavariable-regex:
+          metavariable: $SENSITIVE
+          regex: (?i)(password|passwd|secret|token|cvv|ssn|card)
+    message: >
+      Sensitive data is being printed to stdout.
+      Remove credentials and PII from print/log statements.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-532"]
+      owasp: ["A09:2021"]
+      confidence: HIGH
+
+  # --- Debug Info Exposure ---
+
+  - id: python.lang.security.audit.debug.environ-exposure
+    pattern: |
+      os.environ
+    message: >
+      Exposing os.environ may leak secrets and internal configuration.
+      Only access specific environment variables you need.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-215"]
+      owasp: ["A05:2021"]
+      confidence: MEDIUM
+
+  # --- Path Traversal ---
+
+  - id: python.lang.security.audit.path-traversal.open
+    patterns:
+      - pattern-either:
+          - pattern: |
+              open("..." + $INPUT, ...)
+          - pattern: |
+              open(f"...{$INPUT}...", ...)
+    message: >
+      File path with user input may allow path traversal.
+      Validate and canonicalize paths before opening files.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+
+  # --- XXE ---
+
+  - id: python.lang.security.audit.xxe.etree-fromstring
+    pattern: |
+      ET.fromstring(...)
+    message: >
+      xml.etree.ElementTree.fromstring() is vulnerable to XML External Entity (XXE) attacks.
+      Use defusedxml.ElementTree instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-611"]
+      owasp: ["A05:2021"]
+      confidence: MEDIUM
+
+  # --- Timing Attack ---
+
+  - id: python.lang.security.audit.timing-attack
+    patterns:
+      - pattern: |
+          $A == $B
+      - metavariable-regex:
+          metavariable: $A
+          regex: (?i)(provided|token|secret|key|password|hash|signature|hmac)
+    message: >
+      String comparison with == is not constant-time and may be vulnerable to timing attacks.
+      Use hmac.compare_digest() for security-sensitive comparisons.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-208"]
+      confidence: MEDIUM
+
+  # --- CORS Wildcard ---
+
+  - id: python.lang.security.audit.cors-wildcard
+    pattern: |
+      $RESP.headers["Access-Control-Allow-Origin"] = "*"
+    message: >
+      Setting Access-Control-Allow-Origin to * allows any origin to access the resource.
+      Restrict to specific trusted domains.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-942"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+
+  # =======================================================
+  # JavaScript / TypeScript rules
+  # =======================================================
+
+  # --- Injection ---
 
   - id: javascript.lang.security.audit.xss.innerhtml
     pattern: |
@@ -64,12 +315,91 @@ rules:
     severity: ERROR
     metadata:
       cwe: ["CWE-95"]
+      owasp: ["A03:2021"]
       confidence: HIGH
+
+  - id: javascript.lang.security.audit.new-function
+    pattern: |
+      new Function(...)
+    message: >
+      The Function constructor compiles and runs arbitrary strings as code.
+      This is equivalent to eval() and can lead to code injection.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  - id: javascript.lang.security.audit.sql-injection.string-concat
+    pattern-regex: "(?:SELECT|INSERT|UPDATE|DELETE)\\s.*['\"\\s]\\s*\\+\\s"
+    message: >
+      Detected SQL query built with string concatenation.
+      Use parameterized queries or prepared statements to prevent SQL injection.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # --- Command Injection ---
+
+  - id: javascript.lang.security.audit.command-injection.exec-concat
+    patterns:
+      - pattern-either:
+          - pattern: exec($CMD + $INPUT, ...)
+          - pattern: execSync($CMD + $INPUT)
+    message: >
+      Shell command built with string concatenation via child_process.
+      Use execFile with an array of arguments to prevent command injection.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # --- Path Traversal ---
+
+  - id: javascript.lang.security.audit.path-traversal.fs-read
+    patterns:
+      - pattern-either:
+          - pattern: $FS.readFileSync($PREFIX + $INPUT, ...)
+          - pattern: $FS.readFile($PREFIX + $INPUT, ...)
+          - pattern: $RES.sendFile($PREFIX + $INPUT)
+    message: >
+      File path built with unsanitized input may allow path traversal.
+      Validate and canonicalize file paths. Use an allowlist for permitted directories.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+
+  # --- SSRF ---
+
+  - id: javascript.lang.security.audit.ssrf.request
+    pattern-either:
+      - pattern: axios.get($URL)
+      - pattern: axios.post($URL, ...)
+      - pattern: fetch($URL)
+    message: >
+      HTTP request to a user-controlled URL may allow Server-Side Request Forgery.
+      Validate and allowlist destination URLs. Block internal and private IP ranges.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: MEDIUM
+
+  # --- Hardcoded Secrets ---
 
   - id: generic.security.audit.hardcoded-password
     patterns:
-      - pattern: |
-          $VAR = "..."
+      - pattern: $VAR = "..."
       - metavariable-regex:
           metavariable: $VAR
           regex: (?i)(password|passwd|pwd)
@@ -81,6 +411,463 @@ rules:
     metadata:
       cwe: ["CWE-798"]
       confidence: MEDIUM
+
+  - id: javascript.lang.security.audit.hardcoded-secret
+    patterns:
+      - pattern: const $VAR = "..."
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)(AWS_SECRET|AWS_ACCESS|JWT_SECRET|API_KEY|SECRET_KEY|PRIVATE_KEY|AUTH_TOKEN)
+    message: >
+      Detected hardcoded secret or API key in source code.
+      Use environment variables or a secrets manager instead.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-798"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+
+  # --- Weak Cryptography ---
+
+  - id: javascript.lang.security.audit.crypto.weak-hash
+    patterns:
+      - pattern-either:
+          - pattern: crypto.createHash("md5")
+          - pattern: crypto.createHash('md5')
+          - pattern: crypto.createHash("sha1")
+          - pattern: crypto.createHash('sha1')
+    message: >
+      MD5 and SHA1 are cryptographically broken.
+      Use SHA-256 or stronger for hashing. Use bcrypt or argon2 for passwords.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-328"]
+      owasp: ["A02:2021"]
+      confidence: HIGH
+
+  - id: javascript.lang.security.audit.crypto.weak-cipher
+    patterns:
+      - pattern-either:
+          - pattern: crypto.createCipheriv("des-ecb", ...)
+          - pattern: crypto.createCipheriv('des-ecb', ...)
+          - pattern: crypto.createCipheriv("des-cbc", ...)
+          - pattern: crypto.createCipheriv('des-cbc', ...)
+          - pattern: crypto.createCipheriv("rc4", ...)
+          - pattern: crypto.createCipheriv('rc4', ...)
+    message: >
+      DES and RC4 ciphers are insecure and deprecated.
+      Use AES-256-GCM or ChaCha20-Poly1305 instead.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-327"]
+      owasp: ["A02:2021"]
+      confidence: HIGH
+
+  - id: javascript.lang.security.audit.crypto.math-random
+    pattern: Math.random()
+    message: >
+      Math.random() is not cryptographically secure.
+      Use crypto.randomBytes() or crypto.randomUUID() for security-sensitive values.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-330"]
+      owasp: ["A02:2021"]
+      confidence: MEDIUM
+
+  # --- Open Redirect ---
+
+  - id: javascript.lang.security.audit.open-redirect
+    pattern-either:
+      - pattern: $RES.redirect($INPUT)
+      - pattern: window.location.href = $INPUT
+      - pattern: window.location = $INPUT
+    message: >
+      Redirect to a user-controlled URL may allow open redirect attacks.
+      Validate redirect URLs against an allowlist of trusted domains.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: MEDIUM
+
+  # --- Sensitive Data Exposure ---
+
+  - id: javascript.lang.security.audit.sensitive-data.log-credentials
+    patterns:
+      - pattern-either:
+          - pattern: console.log(..., $SENSITIVE, ...)
+          - pattern: console.log(`... ${$SENSITIVE} ...`)
+      - metavariable-regex:
+          metavariable: $SENSITIVE
+          regex: (?i)(password|passwd|secret|token|cvv|ssn|creditCard|credit_card)
+    message: >
+      Sensitive data (passwords, tokens, card numbers) is being logged.
+      Remove sensitive data from log statements to prevent data exposure.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-532"]
+      owasp: ["A09:2021"]
+      confidence: HIGH
+
+  - id: javascript.lang.security.audit.sensitive-data.localstorage
+    patterns:
+      - pattern: localStorage.setItem($KEY, ...)
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(card|cvv|password|secret|token|ssn).*
+    message: >
+      Storing sensitive data in localStorage is insecure. Data persists
+      and is accessible to any script on the same origin.
+      Use secure server-side sessions instead.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-922"]
+      owasp: ["A02:2021"]
+      confidence: HIGH
+
+  # --- Prototype Pollution ---
+
+  - id: javascript.lang.security.audit.prototype-pollution
+    patterns:
+      - pattern: |
+          for (const $KEY in $SOURCE) {
+            ...
+            $TARGET[$KEY] = $SOURCE[$KEY];
+            ...
+          }
+    message: >
+      Merging objects without checking for __proto__ or constructor keys
+      may allow prototype pollution. Use Object.hasOwn() to filter keys
+      or use a safe merge utility like lodash.merge.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-1321"]
+      confidence: MEDIUM
+
+  # --- ReDoS ---
+
+  - id: javascript.lang.security.audit.redos
+    pattern-regex: "\\([^)]*[+*][^)]*\\)[+*]"
+    message: >
+      Regular expression with nested quantifiers may be vulnerable to
+      ReDoS (Regular Expression Denial of Service). Use a linear-time regex engine
+      or simplify the pattern.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-1333"]
+      confidence: MEDIUM
+
+  # --- File upload without validation ---
+
+  - id: javascript.lang.security.audit.unvalidated-upload
+    pattern: |
+      $FS.writeFileSync($PATH, $REQ.$FIELD.$PROP)
+    message: >
+      File upload without validating file type, size, or name.
+      Check MIME type, file extension allowlist, and scan for malicious content.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-434"]
+      owasp: ["A04:2021"]
+      confidence: MEDIUM
+
+  # --- XSS: document.write ---
+
+  - id: javascript.lang.security.audit.xss.document-write
+    pattern: |
+      document.write(...)
+    message: >
+      Using document.write() with dynamic data can lead to XSS.
+      Use safe DOM APIs like textContent or createElement instead.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # --- Insecure cookie flags ---
+
+  - id: javascript.lang.security.audit.insecure-cookie
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $RES.cookie($NAME, $VAL, {httpOnly: false, ...})
+          - pattern: |
+              $RES.cookie($NAME, $VAL, {secure: false, ...})
+    message: >
+      Cookie set without httpOnly or secure flags. Set httpOnly:true to prevent
+      XSS access and secure:true to require HTTPS.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-614"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+
+  # --- Timing attack ---
+
+  - id: javascript.lang.security.audit.timing-attack
+    patterns:
+      - pattern: |
+          $A === $B
+      - metavariable-regex:
+          metavariable: $A
+          regex: (?i)(provided|token|secret|key|password|hash|apiKey|api_key|signature)
+    message: >
+      String comparison with === is not constant-time and may leak info
+      via timing side-channels. Use crypto.timingSafeEqual() instead.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-208"]
+      confidence: MEDIUM
+
+  # --- NoSQL injection ---
+
+  - id: javascript.lang.security.audit.nosql-injection
+    pattern: |
+      $DB.collection($C).find($INPUT)
+    message: >
+      Passing user input directly to MongoDB find() may allow NoSQL injection.
+      Validate and sanitize query objects. Reject $ operators in user input.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-943"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+
+  # --- Zip Slip ---
+
+  - id: javascript.lang.security.audit.zip-slip
+    pattern: |
+      $FS.writeFileSync("..." + $NAME, ...)
+    message: >
+      Writing files with a user-controlled name without path validation
+      may allow Zip Slip or path traversal during extraction.
+      Verify the resolved path is within the target directory.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+
+  # --- Hardcoded internal IP ---
+
+  - id: javascript.lang.security.audit.hardcoded-internal-url
+    patterns:
+      - pattern: |
+          const $VAR = "..."
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)(INTERNAL|ADMIN|PRIVATE|BACKEND).*
+    message: >
+      Hardcoded internal URL or IP address in source code.
+      Use environment variables or config files for infrastructure addresses.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-798"]
+      confidence: MEDIUM
+
+  # =======================================================
+  # Go rules
+  # =======================================================
+
+  # --- SQL Injection ---
+
+  - id: go.lang.security.audit.sql-injection.string-concat
+    patterns:
+      - pattern-either:
+          - pattern: $DB.Query($X + $Y, ...)
+          - pattern: $DB.Exec($X + $Y, ...)
+          - pattern: $DB.QueryRow($X + $Y, ...)
+    message: >
+      SQL query built with string concatenation. Use parameterized queries
+      with placeholder arguments (e.g., db.Query("SELECT ... WHERE id = ?", id)).
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # --- XSS ---
+
+  - id: go.lang.security.audit.xss.fprintf-response
+    pattern: |
+      fmt.Fprintf($W, $FMT, ...)
+    message: >
+      Writing user input directly to HTTP response via fmt.Fprintf may cause XSS.
+      Use html/template with proper escaping or html.EscapeString().
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: MEDIUM
+
+  # --- Command Injection ---
+
+  - id: go.lang.security.audit.command-injection.exec-command
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command("sh", "-c", $CMD + ...)
+          - pattern: exec.Command("bash", "-c", $CMD + ...)
+          - pattern: exec.Command("sh", "-c", fmt.Sprintf(...))
+          - pattern: exec.Command("bash", "-c", fmt.Sprintf(...))
+    message: >
+      Shell command with string concatenation via exec.Command is vulnerable
+      to command injection. Use exec.Command with separate arguments instead of shell.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # --- Path Traversal ---
+
+  - id: go.lang.security.audit.path-traversal
+    patterns:
+      - pattern-either:
+          - pattern: ioutil.ReadFile($PREFIX + $INPUT)
+          - pattern: os.ReadFile($PREFIX + $INPUT)
+          - pattern: http.ServeFile($W, $R, $PATH)
+    message: >
+      File path with user-controlled input may allow path traversal.
+      Validate paths with filepath.Clean() and verify the result is within allowed directories.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+
+  # --- SSRF ---
+
+  - id: go.lang.security.audit.ssrf.http-get
+    pattern-either:
+      - pattern: http.Get($URL)
+      - pattern: http.Post($URL, ...)
+    message: >
+      HTTP request to a user-controlled URL may allow SSRF.
+      Validate and allowlist destination URLs. Block internal/private IP ranges.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: MEDIUM
+
+  # --- Hardcoded Secrets ---
+
+  - id: go.lang.security.audit.hardcoded-secret
+    patterns:
+      - pattern-either:
+          - pattern: |
+              const $VAR = "..."
+          - pattern: |
+              $VAR = "..."
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)(Password|Secret|APIKey|AccessKey|SecretKey|JWTSecret|PrivateKey)
+    message: >
+      Detected hardcoded secret in source code.
+      Use environment variables or a secrets manager instead.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-798"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+
+  # --- Weak Cryptography ---
+
+  - id: go.lang.security.audit.crypto.md5
+    pattern: |
+      md5.Sum(...)
+    message: >
+      MD5 is cryptographically broken. Use sha256.Sum256() or stronger.
+      For passwords, use bcrypt or argon2.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-328"]
+      owasp: ["A02:2021"]
+      confidence: HIGH
+
+  - id: go.lang.security.audit.crypto.des
+    pattern: |
+      des.NewCipher(...)
+    message: >
+      DES is insecure and deprecated. Use AES (aes.NewCipher) with GCM mode instead.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-327"]
+      owasp: ["A02:2021"]
+      confidence: HIGH
+
+  - id: go.lang.security.audit.crypto.math-rand
+    patterns:
+      - pattern-either:
+          - pattern: rand.Intn(...)
+          - pattern: rand.Int()
+          - pattern: rand.Float64()
+    message: >
+      math/rand is not cryptographically secure.
+      Use crypto/rand for security-sensitive random values.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-330"]
+      owasp: ["A02:2021"]
+      confidence: MEDIUM
+
+  # --- Open Redirect ---
+
+  - id: go.lang.security.audit.open-redirect
+    pattern: |
+      http.Redirect($W, $R, $URL, ...)
+    message: >
+      Redirect to a user-controlled URL may allow open redirect attacks.
+      Validate redirect URLs against an allowlist of trusted domains.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: MEDIUM
+
+  # --- Debug / Data Exposure ---
+
+  - id: go.lang.security.audit.debug.environ-exposure
+    pattern: |
+      os.Environ()
+    message: >
+      Exposing os.Environ() may leak secrets and internal configuration.
+      Only access specific environment variables with os.Getenv().
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-215"]
+      owasp: ["A05:2021"]
+      confidence: MEDIUM
+
+  # --- Nil Dereference ---
 
   - id: go.lang.security.audit.nil-dereference.unchecked-error
     patterns:
@@ -101,4 +888,264 @@ rules:
     severity: WARNING
     metadata:
       cwe: ["CWE-476"]
+      confidence: MEDIUM
+
+  # =======================================================
+  # PHP rules
+  # =======================================================
+
+  # --- SQL Injection ---
+
+  - id: php.lang.security.audit.sql-injection.query-concat
+    patterns:
+      - pattern-either:
+          - pattern: $CONN->query("..." . $INPUT)
+          - pattern: $CONN->exec("..." . $INPUT)
+          - pattern: mysqli_query($CONN, "..." . $INPUT)
+          - pattern: $CONN->query("...$VAR...")
+    message: >
+      SQL query built with string concatenation or variable interpolation.
+      Use prepared statements with parameterized queries.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # --- XSS ---
+
+  - id: php.lang.security.audit.xss.echo-unsanitized
+    patterns:
+      - pattern-either:
+          - pattern: |
+              echo "..." . $INPUT . "...";
+          - pattern: |
+              echo $INPUT;
+    message: >
+      Echoing user input without escaping may cause XSS.
+      Use htmlspecialchars() or htmlentities() before output.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-79"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # --- Command Injection ---
+
+  - id: php.lang.security.audit.command-injection
+    patterns:
+      - pattern-either:
+          - pattern: shell_exec("..." . $INPUT)
+          - pattern: system("..." . $INPUT)
+          - pattern: exec("..." . $INPUT . "...", ...)
+          - pattern: passthru("..." . $INPUT . "...")
+          - pattern: passthru("...$INPUT...")
+    message: >
+      Shell command with user-controlled input via shell_exec/system/exec/passthru.
+      Use escapeshellarg() and escapeshellcmd() or avoid shell commands entirely.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021"]
+      confidence: HIGH
+
+  # --- Path Traversal / LFI ---
+
+  - id: php.lang.security.audit.path-traversal
+    patterns:
+      - pattern-either:
+          - pattern: readfile("..." . $INPUT)
+          - pattern: file_get_contents("..." . $INPUT)
+          - pattern: include($INPUT . "...")
+          - pattern: require_once("..." . $INPUT)
+          - pattern: include_once("..." . $INPUT)
+    message: >
+      File path with user input may allow path traversal or local file inclusion.
+      Validate paths against an allowlist of permitted files/directories.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-22"]
+      owasp: ["A01:2021"]
+      confidence: HIGH
+
+  # --- SSRF ---
+
+  - id: php.lang.security.audit.ssrf
+    patterns:
+      - pattern-either:
+          - pattern: file_get_contents($URL)
+          - pattern: curl_init($URL)
+      - metavariable-pattern:
+          metavariable: $URL
+          patterns:
+            - pattern-not: "..."
+    message: >
+      HTTP request to user-controlled URL may allow SSRF.
+      Validate and allowlist destination URLs.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-918"]
+      owasp: ["A10:2021"]
+      confidence: MEDIUM
+
+  # --- Insecure Deserialization ---
+
+  - id: php.lang.security.audit.deserialization.unserialize
+    pattern: |
+      unserialize(...)
+    message: >
+      unserialize() on untrusted data can lead to arbitrary object injection
+      and remote code execution. Use json_decode() for data interchange.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502"]
+      owasp: ["A08:2021"]
+      confidence: HIGH
+
+  # --- Weak Cryptography ---
+
+  - id: php.lang.security.audit.crypto.md5
+    patterns:
+      - pattern-either:
+          - pattern: md5(...)
+          - pattern: sha1(...)
+    message: >
+      MD5 and SHA1 are cryptographically broken.
+      Use password_hash() for passwords or hash('sha256', ...) for general hashing.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-328"]
+      owasp: ["A02:2021"]
+      confidence: HIGH
+
+  - id: php.lang.security.audit.crypto.weak-cipher
+    pattern: |
+      openssl_encrypt($DATA, "des-ecb", ...)
+    message: >
+      DES is insecure and deprecated. Use AES-256-GCM instead.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-327"]
+      owasp: ["A02:2021"]
+      confidence: HIGH
+
+  - id: php.lang.security.audit.crypto.rand
+    pattern: |
+      rand(...)
+    message: >
+      rand() is not cryptographically secure.
+      Use random_int() or random_bytes() for security-sensitive values.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-330"]
+      owasp: ["A02:2021"]
+      confidence: MEDIUM
+
+  # --- Open Redirect ---
+
+  - id: php.lang.security.audit.open-redirect
+    patterns:
+      - pattern-either:
+          - pattern: |
+              header("Location: " . $INPUT)
+          - pattern: |
+              header("Location: $INPUT")
+    message: >
+      Redirect to user-controlled URL may allow open redirect attacks.
+      Validate against an allowlist of trusted domains.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-601"]
+      owasp: ["A01:2021"]
+      confidence: MEDIUM
+
+  # --- Debug / Info Exposure ---
+
+  - id: php.lang.security.audit.debug.phpinfo
+    pattern: |
+      phpinfo()
+    message: >
+      phpinfo() exposes server configuration, PHP settings, and environment
+      variables. Remove from production code.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-215"]
+      owasp: ["A05:2021"]
+      confidence: HIGH
+
+  - id: php.lang.security.audit.ssl-verify-disabled
+    pattern: |
+      curl_setopt($CH, CURLOPT_SSL_VERIFYPEER, false)
+    message: >
+      Disabling SSL certificate verification allows man-in-the-middle attacks.
+      Always verify SSL certificates in production.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-295"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+
+  # --- Hardcoded secrets (define) ---
+
+  - id: php.lang.security.audit.hardcoded-secret-define
+    patterns:
+      - pattern: |
+          define($KEY, "...")
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(PASSWORD|SECRET|ACCESS_KEY|API_KEY|PRIVATE_KEY|TOKEN).*
+    message: >
+      Detected hardcoded secret in define() constant.
+      Use environment variables or a secrets manager instead.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-798"]
+      owasp: ["A07:2021"]
+      confidence: HIGH
+
+  # --- Sensitive data in error_log ---
+
+  - id: php.lang.security.audit.sensitive-data.error-log
+    pattern: |
+      error_log("...$SENSITIVE...")
+    message: >
+      Sensitive data may be written to error logs. Remove credentials,
+      card numbers, and PII from log statements.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-532"]
+      owasp: ["A09:2021"]
+      confidence: MEDIUM
+
+  # --- Header injection ---
+
+  - id: php.lang.security.audit.header-injection
+    patterns:
+      - pattern-either:
+          - pattern: |
+              header("X-Custom: " . $INPUT)
+          - pattern: |
+              header("..." . $INPUT)
+    message: >
+      HTTP header value from user input may allow header injection or response splitting.
+      Validate and sanitize header values.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-113"]
+      owasp: ["A03:2021"]
       confidence: MEDIUM
