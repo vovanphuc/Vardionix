@@ -8,7 +8,11 @@ import {
 } from "./diagnostics";
 import { FindingsTreeProvider, FindingItem } from "./findings-tree";
 import { createStatusBar, updateStatusBar, setStatusBarScanning } from "./status-bar";
-import { ensureSemgrep, hasSemgrepAvailable } from "./semgrep-downloader";
+import {
+  ensureSemgrep,
+  getLastSemgrepSetupError,
+  hasSemgrepAvailable,
+} from "./semgrep-downloader";
 import {
   getMcpTargetLabel,
   installMcpServer,
@@ -577,8 +581,10 @@ async function ensureSemgrepForScan(): Promise<boolean> {
     return true;
   }
 
-  vscode.window.showErrorMessage(
-    "Vardionix: Semgrep setup failed. The extension tried to install Semgrep automatically but it is still unavailable.",
+  const lastSetupError = getLastSemgrepSetupError();
+  vscode.window.showErrorMessage(lastSetupError
+    ? `Vardionix: Semgrep setup failed. ${lastSetupError}`
+    : "Vardionix: Semgrep setup failed. The extension tried to install Semgrep automatically but it is still unavailable.",
   );
   return false;
 }

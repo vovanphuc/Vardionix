@@ -1,12 +1,21 @@
 import * as vscode from "vscode";
-import { execFileSync, execFile } from "child_process";
+import { execFileSync } from "child_process";
 import { existsSync, mkdirSync, chmodSync, createWriteStream, unlinkSync, renameSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
 import * as https from "https";
 import * as http from "http";
 
+const yauzl: any = require("yauzl");
+
 /** Pinned Semgrep version for reproducibility */
-const SEMGREP_VERSION = "1.67.0";
+const SEMGREP_VERSION = "1.159.0";
+
+/** Methods to try installing semgrep, in priority order */
+const INSTALL_METHODS = [
+  { name: "pipx", commands: [["pipx", "install", `semgrep==${SEMGREP_VERSION}`]] },
+  { name: "pip", commands: [["pip3", "install", "--user", `semgrep==${SEMGREP_VERSION}`], ["pip", "install", "--user", `semgrep==${SEMGREP_VERSION}`]] },
+  { name: "brew", commands: [["brew", "install", "semgrep"]] },
+] as const;
 
 interface PlatformInfo {
   wheelPlatform: string;
@@ -18,39 +27,25 @@ function getPlatformInfo(): PlatformInfo | null {
   const platform = process.platform;
   const arch = process.arch;
 
-  if (platform === "linux" && arch === "x64") {
+  if (platform === "linux" && (arch === "x64" || arch === "arm64")) {
     return {
       wheelPlatform: "manylinux",
-      binaryName: "osemgrep",
-      binaryCandidates: ["osemgrep", "semgrep"],
+      binaryName: "semgrep-core",
+      binaryCandidates: ["semgrep-core", "osemgrep", "semgrep"],
     };
   }
-  if (platform === "linux" && arch === "arm64") {
-    return {
-      wheelPlatform: "manylinux",
-      binaryName: "osemgrep",
-      binaryCandidates: ["osemgrep", "semgrep"],
-    };
-  }
-  if (platform === "darwin" && arch === "x64") {
+  if (platform === "darwin" && (arch === "x64" || arch === "arm64")) {
     return {
       wheelPlatform: "macosx",
-      binaryName: "osemgrep",
-      binaryCandidates: ["osemgrep", "semgrep"],
-    };
-  }
-  if (platform === "darwin" && arch === "arm64") {
-    return {
-      wheelPlatform: "macosx",
-      binaryName: "osemgrep",
-      binaryCandidates: ["osemgrep", "semgrep"],
+      binaryName: "semgrep-core",
+      binaryCandidates: ["semgrep-core", "osemgrep", "semgrep"],
     };
   }
   if (platform === "win32" && arch === "x64") {
     return {
       wheelPlatform: "win",
-      binaryName: "osemgrep.exe",
-      binaryCandidates: ["osemgrep.exe", "semgrep.exe"],
+      binaryName: "semgrep-core.exe",
+      binaryCandidates: ["semgrep-core.exe", "osemgrep.exe", "semgrep.exe"],
     };
   }
 
@@ -67,9 +62,10 @@ function matchesWheel(filename: string, info: PlatformInfo): boolean {
   const platform = process.platform;
 
   if (platform === "linux") {
-    // Match manylinux wheels (any glibc version)
+    // Match manylinux or musllinux wheels
     const archTag = arch === "x64" ? "x86_64" : "aarch64";
-    return filename.includes("manylinux") && filename.includes(archTag);
+    const isLinuxWheel = filename.includes("manylinux") || filename.includes("musllinux");
+    return isLinuxWheel && filename.includes(archTag);
   }
 
   if (platform === "darwin") {
@@ -144,80 +140,127 @@ function downloadFile(url: string, dest: string, onProgress?: (pct: number) => v
   });
 }
 
-/**
- * Extract a single file from a .whl (zip) archive using platform tools.
- */
-function extractFromWheel(whlPath: string, entryPath: string, destDir: string): Promise<string> {
+function openWheel(whlPath: string): Promise<any> {
   return new Promise((resolve, reject) => {
-    const destFile = join(destDir, entryPath.split("/").pop()!);
-    const isWin = process.platform === "win32";
-
-    if (isWin) {
-      // PowerShell: extract specific entry from zip
-      const script = `
-        Add-Type -AssemblyName System.IO.Compression.FileSystem;
-        $zip = [System.IO.Compression.ZipFile]::OpenRead('${whlPath.replace(/'/g, "''")}');
-        $entry = $zip.Entries | Where-Object { $_.FullName -eq '${entryPath}' };
-        if ($entry) {
-          [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, '${destFile.replace(/'/g, "''")}', $true);
+    yauzl.open(
+      whlPath,
+      {
+        lazyEntries: true,
+      },
+      (error: Error | null, zipFile: any) => {
+        if (error) {
+          reject(error);
+          return;
         }
-        $zip.Dispose();
-      `;
-      execFile("powershell", ["-NoProfile", "-Command", script], (err) => {
-        if (err) reject(err);
-        else resolve(destFile);
+        resolve(zipFile);
+      },
+    );
+  });
+}
+
+function closeWheel(zipFile: any): void {
+  try {
+    zipFile.close();
+  } catch {
+    // ignore close errors
+  }
+}
+
+/**
+ * Extract a single file from a .whl (zip) archive without relying on external tools.
+ */
+async function extractFromWheel(
+  whlPath: string,
+  entryPath: string,
+  destDir: string,
+): Promise<string> {
+  const zipFile = await openWheel(whlPath);
+  const destFile = join(destDir, entryPath.split("/").pop()!);
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      closeWheel(zipFile);
+      reject(error);
+    };
+
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      closeWheel(zipFile);
+      resolve(destFile);
+    };
+
+    zipFile.on("error", (error: Error) => {
+      fail(error);
+    });
+
+    zipFile.on("entry", (entry: any) => {
+      if (entry.fileName !== entryPath) {
+        zipFile.readEntry();
+        return;
+      }
+
+      zipFile.openReadStream(entry, (error: Error | null, readStream: NodeJS.ReadableStream | undefined) => {
+        if (error) {
+          fail(error);
+          return;
+        }
+        if (!readStream) {
+          fail(new Error(`Could not open ${entryPath} from downloaded Semgrep wheel`));
+          return;
+        }
+
+        const output = createWriteStream(destFile);
+
+        output.on("error", (streamError) => {
+          fail(streamError);
+        });
+        readStream.on("error", (streamError) => {
+          fail(streamError);
+        });
+        output.on("finish", () => {
+          succeed();
+        });
+
+        readStream.pipe(output);
       });
-    } else {
-      // Unix: unzip specific entry
-      execFile("unzip", ["-o", "-j", whlPath, entryPath, "-d", destDir], (err) => {
-        if (err) reject(err);
-        else resolve(destFile);
-      });
-    }
+    });
+
+    zipFile.on("end", () => {
+      if (!settled) {
+        fail(new Error(`Could not find ${entryPath} in downloaded Semgrep wheel`));
+      }
+    });
+
+    zipFile.readEntry();
   });
 }
 
 function listWheelEntries(whlPath: string): Promise<string[]> {
-  return new Promise((resolve, reject) => {
-    if (process.platform === "win32") {
-      const script = `
-        Add-Type -AssemblyName System.IO.Compression.FileSystem;
-        $zip = [System.IO.Compression.ZipFile]::OpenRead('${whlPath.replace(/'/g, "''")}');
-        try {
-          $zip.Entries | ForEach-Object { $_.FullName };
-        } finally {
-          $zip.Dispose();
-        }
-      `;
+  return openWheel(whlPath).then((zipFile) => new Promise((resolve, reject) => {
+    const entries: string[] = [];
 
-      execFile("powershell", ["-NoProfile", "-Command", script], (err, stdout, stderr) => {
-        if (err) {
-          reject(new Error(stderr || err.message));
-          return;
-        }
-        resolve(
-          stdout
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0),
-        );
-      });
-      return;
-    }
-
-    execFile("unzip", ["-Z1", whlPath], (err, stdout, stderr) => {
-      if (err) {
-        reject(new Error(stderr || err.message));
-        return;
-      }
-      resolve(
-        stdout
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0),
-      );
+    zipFile.on("error", (error: Error) => {
+      closeWheel(zipFile);
+      reject(error);
     });
-  });
+
+    zipFile.on("entry", (entry: any) => {
+      entries.push(entry.fileName);
+      zipFile.readEntry();
+    });
+
+    zipFile.on("end", () => {
+      closeWheel(zipFile);
+      resolve(entries);
+    });
+
+    zipFile.readEntry();
+  }));
 }
 
 async function findBinaryEntryInWheel(
@@ -250,11 +293,71 @@ function scoreWheelEntry(entry: string): number {
 }
 
 /**
- * Check if system Semgrep is available.
+ * Extract all shared libraries from the wheel that sit alongside the binary.
+ * semgrep-core needs libs/ directory (dylibs/so files) at runtime.
+ */
+async function extractLibsFromWheel(
+  whlPath: string,
+  binaryEntryPath: string,
+  destDir: string,
+): Promise<void> {
+  // Find the parent dir of the binary inside the wheel
+  // e.g. "semgrep-1.159.0.data/purelib/semgrep/bin/semgrep-core"
+  //    → "semgrep-1.159.0.data/purelib/semgrep/bin/"
+  const binaryDir = binaryEntryPath.substring(0, binaryEntryPath.lastIndexOf("/") + 1);
+  const libsPrefix = binaryDir + "libs/";
+
+  const entries = await listWheelEntries(whlPath);
+  const libEntries = entries.filter(
+    (e) => e.startsWith(libsPrefix) && !e.endsWith("/"),
+  );
+
+  if (libEntries.length === 0) return;
+
+  // Create libs/ directory in dest
+  const libsDir = join(destDir, "libs");
+  mkdirSync(libsDir, { recursive: true });
+
+  for (const entry of libEntries) {
+    const filename = entry.split("/").pop()!;
+    const destPath = join(libsDir, filename);
+
+    // Skip if already extracted
+    if (existsSync(destPath)) continue;
+
+    await extractFromWheel(whlPath, entry, libsDir);
+
+    // Make libs executable on Unix
+    if (process.platform !== "win32") {
+      try { chmodSync(destPath, 0o755); } catch { /* ignore */ }
+    }
+  }
+}
+
+/**
+ * Check if a Semgrep binary is executable.
+ * For system `semgrep` (Python CLI): runs `semgrep --version`.
+ * For downloaded `semgrep-core` (OCaml binary): runs `semgrep-core -version`
+ * which is the OCaml convention (single dash).
  */
 function checkSystemSemgrep(semgrepPath: string): boolean {
   try {
-    execFileSync(semgrepPath, ["--version"], { stdio: "pipe", timeout: 10_000 });
+    const env: Record<string, string | undefined> = { ...process.env };
+
+    // If this is a downloaded binary, set library path
+    if (semgrepPath !== "semgrep") {
+      const libsDir = join(dirname(semgrepPath), "libs");
+      if (existsSync(libsDir)) {
+        Object.assign(env, buildSemgrepEnv(libsDir));
+      }
+    }
+
+    // semgrep-core uses OCaml convention: -version (single dash)
+    // System semgrep (Python) uses --version (double dash)
+    const isCore = semgrepPath.includes("semgrep-core");
+    const versionFlag = isCore ? "-version" : "--version";
+
+    execFileSync(semgrepPath, [versionFlag], { stdio: "pipe", timeout: 10_000, env });
     return true;
   } catch {
     return false;
@@ -270,10 +373,17 @@ async function fetchWheelUrl(version: string, platformInfo: PlatformInfo): Promi
     urls: Array<{ filename: string; url: string }>;
   };
 
-  for (const entry of data.urls) {
-    if (matchesWheel(entry.filename, platformInfo)) {
-      return entry.url;
-    }
+  // Collect all matching wheels, prefer manylinux over musllinux
+  const matches = data.urls
+    .filter((entry) => matchesWheel(entry.filename, platformInfo))
+    .sort((a, b) => {
+      const aScore = a.filename.includes("manylinux") ? 0 : 1;
+      const bScore = b.filename.includes("manylinux") ? 0 : 1;
+      return aScore - bScore;
+    });
+
+  if (matches.length > 0) {
+    return matches[0].url;
   }
 
   throw new Error(
@@ -281,9 +391,50 @@ async function fetchWheelUrl(version: string, platformInfo: PlatformInfo): Promi
   );
 }
 
+/**
+ * Build environment variables needed for semgrep-core to find its shared libraries.
+ */
+export function buildSemgrepEnv(libsDir: string): Record<string, string> {
+  if (!existsSync(libsDir)) return {};
+
+  if (process.platform === "darwin") {
+    const existing = process.env.DYLD_LIBRARY_PATH ?? "";
+    return {
+      DYLD_LIBRARY_PATH: existing ? `${libsDir}:${existing}` : libsDir,
+    };
+  }
+
+  if (process.platform === "linux") {
+    const existing = process.env.LD_LIBRARY_PATH ?? "";
+    return {
+      LD_LIBRARY_PATH: existing ? `${libsDir}:${existing}` : libsDir,
+    };
+  }
+
+  if (process.platform === "win32") {
+    const existing = process.env.PATH ?? "";
+    return {
+      PATH: `${libsDir};${existing}`,
+    };
+  }
+
+  return {};
+}
+
+/**
+ * Get the libs directory path for the downloaded semgrep.
+ */
+export function getSemgrepLibsDir(): string | null {
+  if (resolvedSemgrepPath === "semgrep") return null;
+  const dir = dirname(resolvedSemgrepPath);
+  const libsDir = join(dir, "libs");
+  return existsSync(libsDir) ? libsDir : null;
+}
+
 // Module-level state: the resolved semgrep path and a ready promise
 let resolvedSemgrepPath: string = "semgrep";
 let semgrepReadyPromise: Promise<void> | null = null;
+let lastSemgrepSetupError: string | undefined;
 
 /**
  * Get the resolved semgrep binary path.
@@ -297,6 +448,10 @@ export function getSemgrepPath(): string {
  */
 export function waitForSemgrep(): Promise<void> {
   return semgrepReadyPromise ?? Promise.resolve();
+}
+
+export function getLastSemgrepSetupError(): string | undefined {
+  return lastSemgrepSetupError;
 }
 
 export function hasSemgrepAvailable(): boolean {
@@ -313,6 +468,7 @@ export function hasSemgrepAvailable(): boolean {
  */
 export function ensureSemgrep(globalStorageUri: vscode.Uri): Promise<void> {
   if (hasSemgrepAvailable()) {
+    lastSemgrepSetupError = undefined;
     return Promise.resolve();
   }
 
@@ -328,7 +484,45 @@ export function ensureSemgrep(globalStorageUri: vscode.Uri): Promise<void> {
   return semgrepReadyPromise;
 }
 
+/**
+ * Try to install semgrep using a package manager (pipx, pip, brew).
+ * Returns true if semgrep becomes available on PATH after install.
+ */
+function tryPackageManagerInstall(
+  method: string,
+  commands: ReadonlyArray<readonly string[]>,
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+): boolean {
+  for (const cmd of commands) {
+    const [bin, ...args] = cmd;
+    try {
+      // Check if the package manager exists
+      execFileSync(bin, ["--version"], { stdio: "pipe", timeout: 10_000 });
+    } catch {
+      continue; // This package manager is not installed
+    }
+
+    try {
+      progress.report({ message: `Installing via ${method}...` });
+      execFileSync(bin, [...args], {
+        stdio: "pipe",
+        timeout: 300_000, // 5 min for install
+        env: { ...process.env },
+      });
+
+      // Check if semgrep is now available
+      if (checkSystemSemgrep("semgrep")) {
+        return true;
+      }
+    } catch {
+      // Install failed, try next method
+    }
+  }
+  return false;
+}
+
 async function doEnsureSemgrep(globalStorageUri: vscode.Uri): Promise<void> {
+  lastSemgrepSetupError = undefined;
   const config = vscode.workspace.getConfiguration("vardionix");
   const configuredPath = config.get<string>("semgrepPath", "semgrep");
 
@@ -350,28 +544,7 @@ async function doEnsureSemgrep(globalStorageUri: vscode.Uri): Promise<void> {
     return;
   }
 
-  // 3. Check if we already downloaded it
-  const storageDir = globalStorageUri.fsPath;
-  const semgrepDir = join(storageDir, "semgrep");
-  const platformInfo = getPlatformInfo();
-
-  if (!platformInfo) {
-    vscode.window.showWarningMessage(
-      `Vardionix: Unsupported platform (${process.platform}/${process.arch}). Please install Semgrep manually: pip install semgrep`
-    );
-    return;
-  }
-
-  const binaryPath = join(semgrepDir, platformInfo.binaryName);
-
-  if (existsSync(binaryPath)) {
-    if (checkSystemSemgrep(binaryPath)) {
-      resolvedSemgrepPath = binaryPath;
-      return;
-    }
-  }
-
-  // 4. Download from PyPI
+  // 3. Try installing via package managers (pipx → pip → brew)
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
@@ -379,65 +552,28 @@ async function doEnsureSemgrep(globalStorageUri: vscode.Uri): Promise<void> {
       cancellable: false,
     },
     async (progress) => {
-      try {
-        mkdirSync(semgrepDir, { recursive: true });
+      for (const method of INSTALL_METHODS) {
+        progress.report({ message: `Trying ${method.name}...` });
 
-        progress.report({ message: "Fetching download info...", increment: 0 });
-        const wheelUrl = await fetchWheelUrl(SEMGREP_VERSION, platformInfo);
-
-        const whlFile = join(semgrepDir, "semgrep.whl");
-
-        progress.report({ message: "Downloading Semgrep binary...", increment: 10 });
-        await downloadFile(wheelUrl, whlFile, (pct) => {
-          progress.report({
-            message: `Downloading Semgrep binary... ${pct}%`,
-            increment: 0,
-          });
-        });
-
-        progress.report({ message: "Extracting binary...", increment: 70 });
-        const wheelEntryPath = await findBinaryEntryInWheel(whlFile, platformInfo);
-        const extractedPath = await extractFromWheel(
-          whlFile,
-          wheelEntryPath,
-          semgrepDir,
-        );
-
-        // Make executable on Unix
-        if (process.platform !== "win32") {
-          chmodSync(extractedPath, 0o755);
-        }
-
-        // Rename to expected name if different
-        if (extractedPath !== binaryPath) {
-          renameSync(extractedPath, binaryPath);
-        }
-
-        // Clean up wheel file
-        try { unlinkSync(whlFile); } catch { /* ignore */ }
-
-        // Verify the binary works
-        try {
-          execFileSync(binaryPath, ["--version"], { stdio: "pipe", timeout: 10_000 });
-        } catch {
-          vscode.window.showWarningMessage(
-            "Vardionix: Downloaded Semgrep binary could not be executed. Please install Semgrep manually: pip install semgrep"
+        if (tryPackageManagerInstall(method.name, method.commands, progress)) {
+          resolvedSemgrepPath = "semgrep";
+          lastSemgrepSetupError = undefined;
+          progress.report({ message: "Semgrep ready!", increment: 100 });
+          vscode.window.showInformationMessage(
+            `Vardionix: Semgrep installed successfully via ${method.name}.`,
           );
           return;
         }
-
-        resolvedSemgrepPath = binaryPath;
-        progress.report({ message: "Semgrep ready!", increment: 100 });
-
-        vscode.window.showInformationMessage(
-          `Vardionix: Semgrep ${SEMGREP_VERSION} installed successfully.`
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        vscode.window.showWarningMessage(
-          `Vardionix: Could not download Semgrep automatically. ${msg}. Please install manually: pip install semgrep`
-        );
       }
+
+      // 4. All package managers failed
+      const installHints = process.platform === "darwin"
+        ? "brew install semgrep  or  pip3 install semgrep"
+        : "pip3 install semgrep  or  pipx install semgrep";
+
+      lastSemgrepSetupError =
+        `Could not install Semgrep automatically (no pipx, pip, or brew found). Install manually with: ${installHints}`;
+      vscode.window.showWarningMessage(`Vardionix: ${lastSemgrepSetupError}`);
     },
   );
 }

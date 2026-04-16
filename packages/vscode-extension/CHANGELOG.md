@@ -1,28 +1,42 @@
 # Changelog
 
-## 0.1.6 (2026-04-16)
+## 0.1.7
 
-- Add manual MCP install and verify actions in the VS Code UI for Claude Code and Codex
-- Bundle the MCP server with the extension so the generated config points at a self-contained server path
-- Fix stale findings persisting after a clean rescan and improve Semgrep auto-setup robustness
+### AI Triage Integration
+- Added 4 new MCP tools for AI-assisted security triage via Claude Code and Codex:
+  - `scan_summary` — scan results overview with category/severity/file breakdown
+  - `findings_triage` — batch findings with surrounding code context for AI classification
+  - `finding_fix` — extended code context with category-specific fix hints
+  - `findings_batch_dismiss` — dismiss or reopen multiple findings at once
+- Bundled MCP server into extension (dist/mcp-server.js)
+- Auto-register MCP server with Claude Code and Codex on extension activation
 
-## 0.1.5 (2026-04-16)
+### Semgrep Auto-Install Fix
+- Replaced binary extraction approach with proper package manager installation
+- Install flow: pipx -> pip3 -> pip -> brew (tries each in order)
+- Fixed: semgrep-core binary cannot run standalone (needs Python wrapper)
+- Fixed: macOS Gatekeeper quarantine blocking downloaded binaries
+- Pinned version updated from 1.67.0 to 1.159.0
 
-- Retry Semgrep auto-setup before scans and show clearer scan errors outside Git repositories
-- Avoid `sql.js` asm out-of-memory crashes by switching to the memory-growth build
-- Stop passing `--json` to dismiss commands in the VS Code extension runner
+### Platform Support
+- Linux x64 (glibc): now supported (was missing in 1.67.0)
+- Linux x64 (musl/Alpine): now supported
+- Windows x64: now supported (was missing in 1.67.0)
+- macOS Intel and Apple Silicon: improved reliability
 
-## 0.1.4 (2026-04-16)
+### Updated Prompts
+- Triage prompt updated with new MCP tool workflow
+- Batch-fix prompt updated for Claude Code/Codex integration
+- Security review command updated with scan/triage/fix phases
 
-- Replace local SQLite storage from `better-sqlite3` to `sql.js` to keep Marketplace packaging cross-platform
+## 0.1.5
 
-## 0.1.0 (2026-04-15)
+- Per-project finding isolation via workspace filtering
+- Expanded Semgrep rules: 252 rules across JS/TS, Python, Go, PHP
+- CodeQL and Trivy adapters for multi-layer scanning
+- Severity-grouped tree view with status bar
 
-- Initial release
-- Semgrep-based security scanning (file, staged, workspace)
-- Findings tree view in sidebar
-- Finding explanation with remediation guidance
-- Finding dismissal workflow
-- Policy lookup (OWASP Top 10, internal standards)
-- Scan-on-save option
-- VS Code diagnostics integration
+## 0.1.0
+
+- Initial release: CLI, MCP server, and VS Code extension
+- Semgrep integration with custom rules and policy enrichment

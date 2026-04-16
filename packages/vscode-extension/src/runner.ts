@@ -1,7 +1,7 @@
 import { execFile, execFileSync } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
-import { getSemgrepPath, waitForSemgrep } from "./semgrep-downloader";
+import { getSemgrepPath, getSemgrepLibsDir, buildSemgrepEnv, waitForSemgrep } from "./semgrep-downloader";
 
 export interface VardionixResult {
   success: boolean;
@@ -65,6 +65,8 @@ export async function runVardionix(
   return new Promise((resolve) => {
     const cli = findCli();
     const semgrepPath = getSemgrepPath();
+    const libsDir = getSemgrepLibsDir();
+    const libsEnv = libsDir ? buildSemgrepEnv(libsDir) : {};
     const commandArgs = shouldRequestJsonOutput(args)
       ? [...cli.args, ...args, "--json"]
       : [...cli.args, ...args];
@@ -78,6 +80,7 @@ export async function runVardionix(
         maxBuffer: 10 * 1024 * 1024,
         env: {
           ...process.env,
+          ...libsEnv,
           FORCE_COLOR: "0",
           NO_COLOR: "1",
           ...(semgrepPath !== "semgrep" ? { VARDIONIX_SEMGREP_PATH: semgrepPath } : {}),

@@ -16,6 +16,7 @@ const vscodeState = vi.hoisted(() => ({
   }>,
   ensureSemgrep: vi.fn(() => Promise.resolve()),
   hasSemgrepAvailable: vi.fn(() => true),
+  lastSemgrepSetupError: undefined as string | undefined,
   installMcpServer: vi.fn(() => ({ updated: true, verified: true })),
   verifyMcpServerRegistration: vi.fn(() => true),
 }));
@@ -94,6 +95,7 @@ vi.mock("../src/diagnostics.ts", () => ({
 
 vi.mock("../src/semgrep-downloader.ts", () => ({
   ensureSemgrep: (...args: any[]) => vscodeState.ensureSemgrep(...args),
+  getLastSemgrepSetupError: () => vscodeState.lastSemgrepSetupError,
   hasSemgrepAvailable: () => vscodeState.hasSemgrepAvailable(),
   getSemgrepPath: () => "semgrep",
   waitForSemgrep: () => Promise.resolve(),
@@ -149,6 +151,7 @@ describe("VS Code extension integration", () => {
     vscodeState.ensureSemgrep.mockClear();
     vscodeState.hasSemgrepAvailable.mockReset();
     vscodeState.hasSemgrepAvailable.mockReturnValue(true);
+    vscodeState.lastSemgrepSetupError = undefined;
     vscodeState.installMcpServer.mockReset();
     vscodeState.installMcpServer.mockReturnValue({ updated: true, verified: true });
     vscodeState.verifyMcpServerRegistration.mockReset();
@@ -230,6 +233,19 @@ describe("VS Code extension integration", () => {
     expect(vscodeState.runVardionix).not.toHaveBeenCalled();
     expect(vscodeState.errorMessages).toContain(
       "Vardionix: Semgrep setup failed. The extension tried to install Semgrep automatically but it is still unavailable.",
+    );
+  });
+
+  it("surfaces the last Semgrep setup error when blocking scans", async () => {
+    vscodeState.hasSemgrepAvailable.mockReturnValue(false);
+    vscodeState.lastSemgrepSetupError =
+      "Could not download Semgrep automatically: getaddrinfo ENOTFOUND pypi.org. Install Semgrep manually with: pip install semgrep";
+
+    activate({ subscriptions: [], globalStorageUri: { fsPath: "/tmp/storage" } } as any);
+    await vscodeState.commands.get("vardionix.scanWorkspace")?.();
+
+    expect(vscodeState.errorMessages).toContain(
+      "Vardionix: Semgrep setup failed. Could not download Semgrep automatically: getaddrinfo ENOTFOUND pypi.org. Install Semgrep manually with: pip install semgrep",
     );
   });
 

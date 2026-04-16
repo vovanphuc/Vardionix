@@ -26,6 +26,8 @@ vi.mock("node:child_process", () => ({
 
 vi.mock("../src/semgrep-downloader", () => ({
   getSemgrepPath: () => "semgrep",
+  getSemgrepLibsDir: () => null,
+  buildSemgrepEnv: () => ({}),
   waitForSemgrep: () => Promise.resolve(),
 }));
 
