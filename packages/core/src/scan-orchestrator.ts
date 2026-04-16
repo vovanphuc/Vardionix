@@ -16,6 +16,12 @@ import {
   PolicyLocalStore,
   PolicyEnricher,
   filterFindings,
+  CodeQLRunner,
+  parseCodeQLSarif,
+  normalizeCodeQLFindings,
+  TrivyRunner,
+  parseTrivyOutput,
+  normalizeTrivyFindings,
 } from "@vardionix/adapters";
 import type { VardionixConfig } from "./config.js";
 import { resolveRuleset } from "./config.js";
@@ -97,6 +103,51 @@ class SemgrepScanService {
   }
 }
 
+class CodeQLScanService {
+  private readonly codeqlRunner: CodeQLRunner;
+
+  constructor(config: VardionixConfig) {
+    const codeqlConfig = config.codeql!;
+    this.codeqlRunner = new CodeQLRunner({
+      codeqlPath: codeqlConfig.path,
+      timeout: codeqlConfig.timeout * 1000,
+      querySuite: codeqlConfig.querySuite,
+    });
+  }
+
+  isAvailable(): boolean {
+    return this.codeqlRunner.checkInstalled();
+  }
+
+  async scan(sourceRoot: string, language: string): Promise<ActiveFinding[]> {
+    const sarif = await this.codeqlRunner.scan({ sourceRoot, language });
+    const parsed = parseCodeQLSarif(sarif);
+    return normalizeCodeQLFindings(parsed);
+  }
+}
+
+class TrivyScanService {
+  private readonly trivyRunner: TrivyRunner;
+
+  constructor(config: VardionixConfig) {
+    this.trivyRunner = new TrivyRunner({
+      trivyPath: config.trivy?.path ?? "trivy",
+      timeout: (config.trivy?.timeout ?? 120) * 1000,
+      ignoreUnfixed: config.trivy?.ignoreUnfixed ?? false,
+    });
+  }
+
+  isAvailable(): boolean {
+    return this.trivyRunner.checkInstalled();
+  }
+
+  async scan(target: string): Promise<ActiveFinding[]> {
+    const output = await this.trivyRunner.scan(target);
+    const parsed = parseTrivyOutput(output);
+    return normalizeTrivyFindings(parsed);
+  }
+}
+
 class FindingEnrichmentService {
   constructor(private readonly policyEnricher: PolicyEnricher) {}
 
@@ -116,6 +167,8 @@ class FindingFilterService {
 export class ScanService {
   private readonly targetResolver = new TargetResolver();
   private readonly semgrepScanService: SemgrepScanService;
+  private readonly codeqlScanService: CodeQLScanService | null;
+  private readonly trivyScanService: TrivyScanService | null;
   private readonly enrichmentService: FindingEnrichmentService;
   private readonly filterService = new FindingFilterService();
 
@@ -127,6 +180,12 @@ export class ScanService {
     policyEnricher: PolicyEnricher,
   ) {
     this.semgrepScanService = new SemgrepScanService(config);
+    this.codeqlScanService = config.codeql?.enabled
+      ? new CodeQLScanService(config)
+      : null;
+    this.trivyScanService = config.trivy?.enabled !== false
+      ? new TrivyScanService(config)
+      : null;
     this.enrichmentService = new FindingEnrichmentService(policyEnricher);
   }
 
@@ -136,11 +195,52 @@ export class ScanService {
 
     const targets = this.targetResolver.resolveTargets(request);
     const target = targets.join(", ") || request.target || ".";
-    const normalized = await this.semgrepScanService.scan(
+
+    // Layer 1: Semgrep (fast pattern matching)
+    const semgrepFindings = await this.semgrepScanService.scan(
       request,
       targets,
       this.config.semgrep.defaultRuleset,
     );
+
+    // Layer 2: CodeQL (deep semantic analysis) — optional
+    let codeqlFindings: ActiveFinding[] = [];
+    if (
+      this.codeqlScanService?.isAvailable() &&
+      (request.scope === ScanScope.DIR || request.scope === ScanScope.WORKSPACE)
+    ) {
+      const sourceRoot = targets[0];
+      const language = CodeQLRunner.detectLanguage(sourceRoot);
+      if (language) {
+        try {
+          codeqlFindings = await this.codeqlScanService.scan(sourceRoot, language);
+        } catch {
+          // CodeQL failure is non-fatal — Semgrep results are still valid
+        }
+      }
+    }
+
+    // Layer 3: Trivy SCA (dependency vulnerability scanning) — optional
+    let trivyFindings: ActiveFinding[] = [];
+    if (
+      this.trivyScanService?.isAvailable() &&
+      (request.scope === ScanScope.DIR || request.scope === ScanScope.WORKSPACE)
+    ) {
+      const sourceRoot = targets[0];
+      try {
+        trivyFindings = await this.trivyScanService.scan(sourceRoot);
+      } catch {
+        // Trivy failure is non-fatal
+      }
+    }
+
+    // Merge and deduplicate: prefer higher-confidence finding per location
+    const normalized = this.deduplicateFindings([
+      ...semgrepFindings,
+      ...codeqlFindings,
+      ...trivyFindings,
+    ]);
+
     const enriched = this.enrichmentService.enrich(normalized);
     const filterResult = this.filterService.filter(enriched);
 
@@ -200,6 +300,25 @@ export class ScanService {
 
   getPolicyStore(): PolicyLocalStore {
     return this.policyStore;
+  }
+
+  /**
+   * Deduplicate findings from multiple scanners.
+   * If both Semgrep and CodeQL report the same location, keep the one
+   * with higher confidence.
+   */
+  private deduplicateFindings(findings: ActiveFinding[]): ActiveFinding[] {
+    const byLocation = new Map<string, ActiveFinding>();
+
+    for (const f of findings) {
+      const key = `${f.filePath}:${f.startLine}:${f.category}`;
+      const existing = byLocation.get(key);
+      if (!existing || (f.confidenceScore ?? 0) > (existing.confidenceScore ?? 0)) {
+        byLocation.set(key, f);
+      }
+    }
+
+    return Array.from(byLocation.values());
   }
 
   private computeSeverityStats(

@@ -9,6 +9,18 @@ export interface VardionixConfig {
     defaultRuleset: string;
     timeout: number;
   };
+  codeql?: {
+    path: string;
+    querySuite: string;
+    timeout: number;
+    enabled: boolean;
+  };
+  trivy?: {
+    path: string;
+    timeout: number;
+    enabled: boolean;
+    ignoreUnfixed: boolean;
+  };
   policy: {
     directories: string[];
   };
@@ -23,6 +35,18 @@ const DEFAULT_CONFIG: VardionixConfig = {
     path: "semgrep",
     defaultRuleset: "auto",
     timeout: 300,
+  },
+  codeql: {
+    path: "codeql",
+    querySuite: "security-extended",
+    timeout: 600,
+    enabled: false,
+  },
+  trivy: {
+    path: "trivy",
+    timeout: 120,
+    enabled: true,
+    ignoreUnfixed: false,
   },
   policy: {
     directories: ["built-in"],
@@ -94,6 +118,12 @@ export function loadConfig(configPath?: string): VardionixConfig {
 
       config = {
         semgrep: { ...DEFAULT_CONFIG.semgrep, ...parsed.semgrep },
+        codeql: parsed.codeql
+          ? { ...DEFAULT_CONFIG.codeql!, ...parsed.codeql }
+          : DEFAULT_CONFIG.codeql,
+        trivy: parsed.trivy
+          ? { ...DEFAULT_CONFIG.trivy!, ...parsed.trivy }
+          : DEFAULT_CONFIG.trivy,
         policy: { ...DEFAULT_CONFIG.policy, ...parsed.policy },
         output: { ...DEFAULT_CONFIG.output, ...parsed.output },
       };
