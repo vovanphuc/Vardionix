@@ -2,7 +2,7 @@
   "name": "vardionix-vscode",
   "displayName": "Vardionix - DevSecOps",
   "description": "Unified DevSecOps tool for scanning, triaging, and remediating security findings with Semgrep, Claude, and Codex",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "publisher": "vardionix",
   "license": "MIT",
   "icon": "icon.png",
@@ -88,6 +88,24 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "vardionix.focusCurrentFile",
+        "title": "Toggle Focus Current File",
+        "category": "Vardionix",
+        "icon": "$(target)"
+      },
+      {
+        "command": "vardionix.configureFindingsView",
+        "title": "Configure Findings View",
+        "category": "Vardionix",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "vardionix.rescanFindingFile",
+        "title": "Rescan This File",
+        "category": "Vardionix",
+        "icon": "$(sync)"
+      },
+      {
         "command": "vardionix.installMcpIntegration",
         "title": "Install MCP",
         "category": "Vardionix",
@@ -149,9 +167,19 @@
           "group": "navigation@3"
         },
         {
-          "command": "vardionix.installMcpIntegration",
+          "command": "vardionix.focusCurrentFile",
           "when": "view == vardionixFindings",
           "group": "navigation@4"
+        },
+        {
+          "command": "vardionix.configureFindingsView",
+          "when": "view == vardionixFindings",
+          "group": "navigation@5"
+        },
+        {
+          "command": "vardionix.installMcpIntegration",
+          "when": "view == vardionixFindings",
+          "group": "navigation@6"
         },
         {
           "command": "vardionix.listExcludedFindings",
@@ -179,6 +207,16 @@
           "command": "vardionix.dismissFinding",
           "when": "view == vardionixFindings && viewItem == finding",
           "group": "inline@2"
+        },
+        {
+          "command": "vardionix.rescanFindingFile",
+          "when": "view == vardionixFindings && viewItem == finding",
+          "group": "inline@3"
+        },
+        {
+          "command": "vardionix.showPolicy",
+          "when": "view == vardionixFindings && viewItem == finding",
+          "group": "inline@4"
         }
       ]
     },
@@ -199,7 +237,32 @@
         "vardionix.scanOnSave": {
           "type": "boolean",
           "default": false,
-          "description": "Automatically scan files when saved.",
+          "description": "Legacy mode: scan every saved file, even when it has no current findings.",
+          "scope": "resource"
+        },
+        "vardionix.rescanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Re-scan files on save when they have active findings or pending verification entries.",
+          "scope": "resource"
+        },
+        "vardionix.rescanOnIdle": {
+          "type": "boolean",
+          "default": true,
+          "description": "Schedule a background file re-scan after you stop typing for a short period. This only runs when the document is already saved or auto-save keeps it clean.",
+          "scope": "resource"
+        },
+        "vardionix.rescanDebounceMs": {
+          "type": "number",
+          "default": 1500,
+          "minimum": 250,
+          "description": "How long Vardionix waits after typing stops before attempting an idle re-scan.",
+          "scope": "resource"
+        },
+        "vardionix.hideTouchedFindingsImmediately": {
+          "type": "boolean",
+          "default": true,
+          "description": "Move touched findings into a pending verification state immediately after you edit the affected code.",
           "scope": "resource"
         },
         "vardionix.severityFilter": {

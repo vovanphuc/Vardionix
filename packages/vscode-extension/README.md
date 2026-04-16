@@ -11,21 +11,21 @@ Vardionix brings security scanning into your editor workflow. It runs Semgrep un
 ### Prerequisites
 
 1. **Node.js 22+** — [Download](https://nodejs.org/)
-2. **Semgrep** — Install via pip or brew:
+2. **Semgrep** — Optional in most VS Code workflows. The extension tries to set it up automatically by using, in order:
+   - `vardionix.semgrepPath` if you configured one
+   - `semgrep` from your system `PATH`
+   - automatic install via `pipx`, `pip`, or `brew`
 
-```bash
-pip install semgrep
-# or
-brew install semgrep
-```
+You usually do not need to install Semgrep manually before using the extension. Manual installation is still useful if your machine blocks package installs, has no supported package manager, or you want to pin a custom binary path.
 
 ### Your First Scan
 
 1. Open any project in VS Code
 2. Open a source file (`.js`, `.ts`, `.py`, `.go`, etc.)
-3. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS)
-4. Type **"Vardionix: Scan Current File"** and press Enter
-5. View results in the **Vardionix** sidebar (shield icon) and in the Problems panel
+3. Wait a moment if the extension is setting up Semgrep for the first time
+4. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS)
+5. Type **"Vardionix: Scan Current File"** and press Enter
+6. View results in the **Vardionix** sidebar (shield icon) and in the Problems panel
 
 ## Commands
 
@@ -42,16 +42,21 @@ Open the Command Palette (`Ctrl+Shift+P`) and type `Vardionix:` to see all avail
 | **Vardionix: Dismiss Finding** | Dismiss a false positive with a reason |
 | **Vardionix: Show Policy** | Look up a security policy by ID |
 | **Vardionix: Refresh Findings** | Refresh the findings tree view |
+| **Vardionix: Toggle Focus Current File** | Limit the sidebar to the file in the active editor |
+| **Vardionix: Configure Findings View** | Change grouping, minimum severity, pending visibility, and dismissed visibility |
 
 ## Features
 
 ### Sidebar Findings Tree
 
 Click the **shield icon** in the Activity Bar to open the Vardionix panel. Active security findings are organized here with severity indicators. Click any finding to jump to the exact line in your code.
+Use **Toggle Focus Current File** or **Configure Findings View** to switch between file-first and severity-first grouping, hide lower severities, and include dismissed findings when you need audit context.
 
 ### Inline Diagnostics
 
 Active findings appear as squiggly underlines in your editor and in the **Problems** panel (`Ctrl+Shift+M`), just like ESLint or TypeScript errors.
+When you edit affected code, Vardionix moves the touched warning into **Pending Verification** immediately, removes it from severity counts, and downgrades the diagnostic while it waits for confirmation. The extension then re-scans the file on save, and can also schedule an idle background re-scan when the file is already saved or auto-save keeps it clean.
+Diagnostics also expose quick actions for **Explain finding**, **Dismiss finding**, **Show policy**, and **Rescan this file** directly from the editor or Problems panel.
 
 ### Excluded Findings Review
 
@@ -71,9 +76,11 @@ Enable automatic scanning every time you save a file:
 
 ```json
 {
-  "vardionix.scanOnSave": true
+  "vardionix.rescanOnSave": true
 }
 ```
+
+If you want the older aggressive behavior that scans every saved file regardless of whether it currently has findings, enable the legacy `vardionix.scanOnSave` setting instead.
 
 ### Pre-Commit Scanning
 
@@ -93,17 +100,23 @@ Configure in VS Code Settings (`Ctrl+,`) or in `settings.json`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `vardionix.semgrepPath` | `"semgrep"` | Path to the Semgrep binary |
+| `vardionix.semgrepPath` | `"semgrep"` | Path to the Semgrep binary. Leave as `"semgrep"` to auto-detect or auto-install |
 | `vardionix.defaultRuleset` | `"auto"` | Semgrep ruleset (`"auto"`, `"p/security-audit"`, or path to custom rules) |
-| `vardionix.scanOnSave` | `false` | Automatically scan files when saved |
+| `vardionix.rescanOnSave` | `true` | Re-scan files on save when they already have findings or pending verification entries |
+| `vardionix.rescanOnIdle` | `true` | Try a background re-scan after you stop typing for a short period when the file is already saved |
+| `vardionix.rescanDebounceMs` | `1500` | Delay before an idle re-scan starts |
+| `vardionix.hideTouchedFindingsImmediately` | `true` | Move touched findings into pending verification as soon as you edit the affected code |
+| `vardionix.scanOnSave` | `false` | Legacy mode that scans every saved file |
 | `vardionix.severityFilter` | `[]` | Only show findings at these levels: `"critical"`, `"high"`, `"medium"`, `"low"`, `"info"` |
 
 ### Example Configuration
 
 ```json
 {
-  "vardionix.scanOnSave": true,
-  "vardionix.severityFilter": ["critical", "high"],
+  "vardionix.rescanOnSave": true,
+  "vardionix.rescanOnIdle": true,
+  "vardionix.rescanDebounceMs": 1200,
+  "vardionix.hideTouchedFindingsImmediately": true,
   "vardionix.defaultRuleset": "auto"
 }
 ```
@@ -161,19 +174,33 @@ JavaScript, TypeScript, Python, Go, Java, C, C++, Ruby, PHP, Rust, Kotlin, Swift
 
 ### "Semgrep not found"
 
-Make sure Semgrep is installed and available in your PATH:
+The extension first tries to detect or install Semgrep automatically. If setup still fails, check the **Output** panel and select **Vardionix** for the detailed error.
+
+If you prefer manual setup, or your environment blocks automatic installation, make sure Semgrep is installed and available in your PATH:
 
 ```bash
 semgrep --version
 ```
 
-If installed in a virtual environment, set the full path in settings:
+Common manual install options:
+
+```bash
+pip3 install semgrep
+# or
+pipx install semgrep
+# or on macOS
+brew install semgrep
+```
+
+If Semgrep is installed in a virtual environment or non-standard location, set the full path in settings:
 
 ```json
 {
   "vardionix.semgrepPath": "/home/user/.venv/bin/semgrep"
 }
 ```
+
+Automatic setup currently applies to the VS Code extension workflow. If you run the standalone CLI or MCP server outside the extension, you should still ensure Semgrep is installed yourself.
 
 ### No findings showing up
 

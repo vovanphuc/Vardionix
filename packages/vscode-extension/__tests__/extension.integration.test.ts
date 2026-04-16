@@ -2,16 +2,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const vscodeState = vi.hoisted(() => ({
   commands: new Map<string, (...args: any[]) => unknown>(),
+  codeActionProviders: [] as unknown[],
   panels: [] as Array<{ webview: { html: string } }>,
   informationMessages: [] as string[],
   errorMessages: [] as string[],
   warningMessages: [] as string[],
+  outputLines: [] as string[],
+  onDidSaveTextDocument: undefined as ((doc: any) => unknown) | undefined,
+  onDidChangeTextDocument: undefined as ((event: any) => unknown) | undefined,
+  onDidCloseTextDocument: undefined as ((doc: any) => unknown) | undefined,
+  onDidChangeActiveTextEditor: undefined as ((editor: any) => unknown) | undefined,
   quickPickSelectionIndex: 0,
   updateDiagnostics: vi.fn(),
   runVardionix: vi.fn(),
   findingsTreeInstances: [] as Array<{
     findings: unknown[];
+    grouping?: string;
     setFindings: (findings: unknown[]) => void;
+    setGrouping: (grouping: string) => void;
     getSeverityCounts: () => Record<string, number>;
   }>,
   ensureSemgrep: vi.fn(() => Promise.resolve()),
@@ -23,7 +31,14 @@ const vscodeState = vi.hoisted(() => ({
 
 vi.mock("vscode", () => ({
   window: {
-    createTreeView: vi.fn(() => ({ dispose: vi.fn() })),
+    createTreeView: vi.fn(() => ({ dispose: vi.fn(), description: "", message: "" })),
+    createOutputChannel: vi.fn(() => ({
+      appendLine: vi.fn((line: string) => {
+        vscodeState.outputLines.push(line);
+      }),
+      show: vi.fn(),
+      dispose: vi.fn(),
+    })),
     createStatusBarItem: vi.fn(() => ({
       text: "",
       tooltip: "",
@@ -53,13 +68,29 @@ vi.mock("vscode", () => ({
       vscodeState.panels.push(panel);
       return panel;
     }),
+    activeTextEditor: { document: { uri: { scheme: "file", fsPath: "/repo/src/app.js" } } },
+    onDidChangeActiveTextEditor: vi.fn((callback: (editor: any) => unknown) => {
+      vscodeState.onDidChangeActiveTextEditor = callback;
+      return { dispose: vi.fn() };
+    }),
   },
   workspace: {
     workspaceFolders: [{ uri: { fsPath: "/repo" } }],
     getConfiguration: vi.fn(() => ({
-      get: vi.fn(() => false),
+      get: vi.fn((_key: string, defaultValue?: any) => defaultValue ?? false),
     })),
-    onDidSaveTextDocument: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidSaveTextDocument: vi.fn((callback: (doc: any) => unknown) => {
+      vscodeState.onDidSaveTextDocument = callback;
+      return { dispose: vi.fn() };
+    }),
+    onDidChangeTextDocument: vi.fn((callback: (event: any) => unknown) => {
+      vscodeState.onDidChangeTextDocument = callback;
+      return { dispose: vi.fn() };
+    }),
+    onDidCloseTextDocument: vi.fn((callback: (doc: any) => unknown) => {
+      vscodeState.onDidCloseTextDocument = callback;
+      return { dispose: vi.fn() };
+    }),
   },
   commands: {
     registerCommand: vi.fn((name: string, callback: (...args: any[]) => unknown) => {
@@ -73,11 +104,27 @@ vi.mock("vscode", () => ({
       set: vi.fn(),
       dispose: vi.fn(),
     })),
+    registerCodeActionsProvider: vi.fn((_selector: any, provider: unknown) => {
+      vscodeState.codeActionProviders.push(provider);
+      return { dispose: vi.fn() };
+    }),
   },
   StatusBarAlignment: { Left: 1, Right: 2 },
   ThemeColor: class ThemeColor { constructor(public id: string) {} },
   ProgressLocation: { Notification: 1 },
   ViewColumn: { Beside: 2 },
+  CodeActionKind: { QuickFix: "quickfix" },
+  CodeAction: class CodeAction {
+    title: string;
+    kind: string;
+    command?: unknown;
+    diagnostics?: unknown[];
+    isPreferred?: boolean;
+    constructor(title: string, kind: string) {
+      this.title = title;
+      this.kind = kind;
+    }
+  },
 }));
 
 vi.mock("../src/runner.ts", () => ({
@@ -91,6 +138,8 @@ vi.mock("../src/diagnostics.ts", () => ({
     dispose: vi.fn(),
   }),
   updateDiagnostics: (...args: any[]) => vscodeState.updateDiagnostics(...args),
+  getEffectiveSeverity: (finding: any) => finding.policySeverityOverride ?? finding.severity,
+  meetsMinimumSeverity: () => true,
 }));
 
 vi.mock("../src/semgrep-downloader.ts", () => ({
@@ -110,6 +159,7 @@ vi.mock("../src/mcp-register.ts", () => ({
 vi.mock("../src/findings-tree.ts", () => ({
   FindingsTreeProvider: class FakeFindingsTreeProvider {
     findings: unknown[] = [];
+    grouping = "file";
 
     constructor() {
       vscodeState.findingsTreeInstances.push(this);
@@ -123,9 +173,16 @@ vi.mock("../src/findings-tree.ts", () => ({
       return this.findings;
     }
 
+    setGrouping(grouping: string) {
+      this.grouping = grouping;
+    }
+
     getSeverityCounts() {
       const counts: Record<string, number> = {};
       for (const f of this.findings as any[]) {
+        if (f.pendingVerification || f.status !== "open") {
+          continue;
+        }
         const sev = f.policySeverityOverride ?? f.severity;
         counts[sev] = (counts[sev] ?? 0) + 1;
       }
@@ -140,10 +197,16 @@ import { activate } from "../src/extension.js";
 describe("VS Code extension integration", () => {
   beforeEach(() => {
     vscodeState.commands.clear();
+    vscodeState.codeActionProviders.length = 0;
     vscodeState.panels.length = 0;
     vscodeState.informationMessages.length = 0;
     vscodeState.errorMessages.length = 0;
     vscodeState.warningMessages.length = 0;
+    vscodeState.outputLines.length = 0;
+    vscodeState.onDidSaveTextDocument = undefined;
+    vscodeState.onDidChangeTextDocument = undefined;
+    vscodeState.onDidCloseTextDocument = undefined;
+    vscodeState.onDidChangeActiveTextEditor = undefined;
     vscodeState.quickPickSelectionIndex = 0;
     vscodeState.updateDiagnostics.mockReset();
     vscodeState.runVardionix.mockReset();
@@ -180,18 +243,148 @@ describe("VS Code extension integration", () => {
     await vscodeState.commands.get("vardionix.listFindings")?.();
 
     expect(vscodeState.runVardionix).toHaveBeenCalledWith(
-      ["findings", "list", "--open-only", "--workspace", "/repo"],
+      ["findings", "list", "--workspace", "/repo"],
       "/repo",
     );
     expect(vscodeState.findingsTreeInstances).toHaveLength(1);
     expect(vscodeState.findingsTreeInstances[0].findings).toEqual([
       expect.objectContaining({ id: "F-open", kind: "active" }),
     ]);
+    expect(vscodeState.findingsTreeInstances[0].grouping).toBe("file");
     expect(vscodeState.updateDiagnostics).toHaveBeenCalledWith(
       expect.any(Object),
       [
         expect.objectContaining({ id: "F-open" }),
       ],
+    );
+  });
+
+  it("hides edited findings immediately and rescans the file on save", async () => {
+    vscodeState.runVardionix
+      .mockResolvedValueOnce({
+        success: true,
+        data: [
+          {
+            kind: "active",
+            id: "F-open",
+            severity: "high",
+            status: "open",
+            title: "Open finding",
+            message: "Potential XSS",
+            filePath: "/repo/src/app.js",
+            startLine: 5,
+            endLine: 5,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: { totalFindings: 0, totalExcluded: 0 },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: [],
+      });
+
+    activate({ subscriptions: [], globalStorageUri: { fsPath: "/tmp/storage" } } as any);
+    await vscodeState.commands.get("vardionix.listFindings")?.();
+
+    await vscodeState.onDidChangeTextDocument?.({
+      document: {
+        isDirty: true,
+        uri: { scheme: "file", fsPath: "/repo/src/app.js" },
+      },
+      contentChanges: [
+        {
+          range: {
+            start: { line: 4 },
+            end: { line: 4 },
+          },
+        },
+      ],
+    });
+
+    expect(vscodeState.findingsTreeInstances[0].findings).toEqual([
+      expect.objectContaining({ id: "F-open", pendingVerification: true }),
+    ]);
+    expect(vscodeState.updateDiagnostics).toHaveBeenLastCalledWith(
+      expect.any(Object),
+      [expect.objectContaining({ id: "F-open", pendingVerification: true })],
+    );
+
+    await vscodeState.onDidSaveTextDocument?.({
+      uri: { scheme: "file", fsPath: "/repo/src/app.js" },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(vscodeState.runVardionix).toHaveBeenNthCalledWith(
+      2,
+      ["scan", "file", "/repo/src/app.js"],
+      "/repo",
+    );
+    expect(vscodeState.runVardionix).toHaveBeenNthCalledWith(
+      3,
+      ["findings", "list", "--workspace", "/repo"],
+      "/repo",
+    );
+    expect(vscodeState.findingsTreeInstances[0].findings).toEqual([]);
+    expect(vscodeState.informationMessages).toContain(
+      "Vardionix: Cleared 1 warning(s) in src/app.js. No open findings remain.",
+    );
+  });
+
+  it("restores hidden findings when a dirty file is closed without saving", async () => {
+    vscodeState.runVardionix.mockResolvedValue({
+      success: true,
+      data: [
+        {
+          kind: "active",
+          id: "F-open",
+          severity: "high",
+          status: "open",
+          title: "Open finding",
+          message: "Potential XSS",
+          filePath: "/repo/src/app.js",
+          startLine: 5,
+          endLine: 5,
+        },
+      ],
+    });
+
+    activate({ subscriptions: [], globalStorageUri: { fsPath: "/tmp/storage" } } as any);
+    await vscodeState.commands.get("vardionix.listFindings")?.();
+
+    await vscodeState.onDidChangeTextDocument?.({
+      document: {
+        isDirty: true,
+        uri: { scheme: "file", fsPath: "/repo/src/app.js" },
+      },
+      contentChanges: [
+        {
+          range: {
+            start: { line: 4 },
+            end: { line: 4 },
+          },
+        },
+      ],
+    });
+
+    expect(vscodeState.findingsTreeInstances[0].findings).toEqual([
+      expect.objectContaining({ id: "F-open", pendingVerification: true }),
+    ]);
+
+    await vscodeState.onDidCloseTextDocument?.({
+      uri: { fsPath: "/repo/src/app.js" },
+    });
+
+    expect(vscodeState.findingsTreeInstances[0].findings).toEqual([
+      expect.objectContaining({ id: "F-open" }),
+    ]);
+    expect(vscodeState.updateDiagnostics).toHaveBeenLastCalledWith(
+      expect.any(Object),
+      [expect.objectContaining({ id: "F-open" })],
     );
   });
 

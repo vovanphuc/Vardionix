@@ -16,6 +16,7 @@ export interface Finding {
   policyId?: string | null;
   policySeverityOverride?: string | null;
   remediationGuidance?: string | null;
+  pendingVerification?: boolean;
 }
 
 export interface ExcludedFinding {
@@ -36,6 +37,30 @@ const SEVERITY_MAP: Record<string, vscode.DiagnosticSeverity> = {
   low: vscode.DiagnosticSeverity.Information,
   info: vscode.DiagnosticSeverity.Hint,
 };
+
+export const SEVERITY_ORDER = ["info", "low", "medium", "high", "critical"] as const;
+export type FindingsGroupingMode = "severity" | "file";
+export type MinimumSeverityFilter = typeof SEVERITY_ORDER[number] | "all";
+
+export function getEffectiveSeverity(finding: Finding | ExcludedFinding): string {
+  return finding.policySeverityOverride ?? finding.severity;
+}
+
+export function meetsMinimumSeverity(
+  finding: Finding,
+  minimumSeverity: MinimumSeverityFilter,
+): boolean {
+  if (minimumSeverity === "all") {
+    return true;
+  }
+
+  return severityRank(getEffectiveSeverity(finding)) >= severityRank(minimumSeverity);
+}
+
+export function severityRank(severity: string): number {
+  const index = SEVERITY_ORDER.indexOf(severity as (typeof SEVERITY_ORDER)[number]);
+  return index >= 0 ? index : 0;
+}
 
 export function createDiagnosticCollection(): vscode.DiagnosticCollection {
   return vscode.languages.createDiagnosticCollection("vardionix");
@@ -75,12 +100,23 @@ function findingToDiagnostic(finding: Finding): vscode.Diagnostic {
 
   const diagnostic = new vscode.Diagnostic(
     range,
-    `[${finding.id}] ${finding.message}`,
-    SEVERITY_MAP[effectiveSeverity] ?? vscode.DiagnosticSeverity.Warning,
+    finding.pendingVerification
+      ? `[${finding.id}] Pending verification after edit. Save or wait for auto-rescan to confirm.\n\nPrevious finding: ${finding.message}`
+      : `[${finding.id}] ${finding.message}`,
+    finding.pendingVerification
+      ? vscode.DiagnosticSeverity.Hint
+      : SEVERITY_MAP[effectiveSeverity] ?? vscode.DiagnosticSeverity.Warning,
   );
 
   diagnostic.source = "vardionix";
   diagnostic.code = finding.ruleId;
+  (diagnostic as vscode.Diagnostic & {
+    data?: { findingId: string; policyId?: string | null; filePath: string };
+  }).data = {
+    findingId: finding.id,
+    policyId: finding.policyId,
+    filePath: finding.filePath,
+  };
 
   if (finding.remediationGuidance) {
     diagnostic.message += `\n\nRemediation: ${finding.remediationGuidance}`;

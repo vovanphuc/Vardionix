@@ -2,11 +2,16 @@ import * as vscode from "vscode";
 import { runVardionix } from "./runner";
 import {
   createDiagnosticCollection,
+  getEffectiveSeverity,
+  meetsMinimumSeverity,
+  type FindingsGroupingMode,
+  type MinimumSeverityFilter,
   updateDiagnostics,
   type ExcludedFinding,
   type Finding,
 } from "./diagnostics";
 import { FindingsTreeProvider, FindingItem } from "./findings-tree";
+import { VardionixCodeActionProvider } from "./code-actions";
 import { createStatusBar, updateStatusBar, setStatusBarScanning } from "./status-bar";
 import {
   ensureSemgrep,
@@ -22,14 +27,36 @@ import {
 
 let diagnosticCollection: vscode.DiagnosticCollection;
 let findingsTreeProvider: FindingsTreeProvider;
+let findingsTreeView: vscode.TreeView<unknown> | undefined;
 let semgrepStorageUri: vscode.Uri | undefined;
 let extensionContext: vscode.ExtensionContext | undefined;
+let outputChannel: vscode.OutputChannel | undefined;
+let activeFindings: Finding[] = [];
+const pendingVerificationFindingIds = new Set<string>();
+const pendingRestoreTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingIdleRescanTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const runningFileScans = new Map<string, Promise<void>>();
+const viewState: {
+  groupBy: FindingsGroupingMode;
+  currentFileOnly: boolean;
+  showDismissed: boolean;
+  minimumSeverity: MinimumSeverityFilter;
+  showPendingVerification: boolean;
+} = {
+  groupBy: "file",
+  currentFileOnly: false,
+  showDismissed: false,
+  minimumSeverity: "all",
+  showPendingVerification: true,
+};
 
 export function activate(context: vscode.ExtensionContext): void {
   diagnosticCollection = createDiagnosticCollection();
   findingsTreeProvider = new FindingsTreeProvider();
+  findingsTreeProvider.setGrouping(viewState.groupBy);
   semgrepStorageUri = context.globalStorageUri;
   extensionContext = context;
+  outputChannel = vscode.window.createOutputChannel("Vardionix");
 
   // Ensure Semgrep is available (downloads if needed, runs in background)
   ensureSemgrep(context.globalStorageUri);
@@ -42,12 +69,14 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: findingsTreeProvider,
     showCollapseAll: true,
   });
+  findingsTreeView = treeView;
 
   // Register commands
   context.subscriptions.push(
     diagnosticCollection,
     statusBar,
     treeView,
+    outputChannel,
     vscode.commands.registerCommand("vardionix.scanCurrentFile", scanCurrentFile),
     vscode.commands.registerCommand("vardionix.scanStagedFiles", scanStagedFiles),
     vscode.commands.registerCommand("vardionix.scanWorkspace", scanWorkspace),
@@ -57,43 +86,119 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("vardionix.dismissFinding", dismissFinding),
     vscode.commands.registerCommand("vardionix.showPolicy", showPolicy),
     vscode.commands.registerCommand("vardionix.refreshFindings", refreshFindings),
+    vscode.commands.registerCommand("vardionix.configureFindingsView", configureFindingsView),
+    vscode.commands.registerCommand("vardionix.focusCurrentFile", toggleCurrentFileOnly),
+    vscode.commands.registerCommand("vardionix.rescanFindingFile", rescanFindingFile),
     vscode.commands.registerCommand("vardionix.installMcpIntegration", installMcpIntegration),
     vscode.commands.registerCommand("vardionix.verifyMcpIntegration", verifyMcpIntegration),
+    vscode.languages.registerCodeActionsProvider(
+      { scheme: "file" },
+      new VardionixCodeActionProvider(),
+      { providedCodeActionKinds: VardionixCodeActionProvider.providedCodeActionKinds },
+    ),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      void handleDocumentChange(event);
+    }),
+    vscode.workspace.onDidCloseTextDocument((document) => {
+      cancelPendingIdleRescan(document.uri.fsPath);
+      cancelPendingRestore(document.uri.fsPath);
+      restoreHiddenFindingsForFile(document.uri.fsPath);
+    }),
+    vscode.window.onDidChangeActiveTextEditor(() => {
+      applyFindingsToUi();
+    }),
   );
 
-  // Auto-scan on save if configured
-  const config = vscode.workspace.getConfiguration("vardionix");
-  if (config.get<boolean>("scanOnSave")) {
-    context.subscriptions.push(
-      vscode.workspace.onDidSaveTextDocument((doc) => {
-        scanFile(doc.uri.fsPath);
-      }),
-    );
-  }
+  context.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      void handleDocumentSave(doc);
+    }),
+  );
 }
 
 export function deactivate(): void {
+  for (const timer of pendingRestoreTimers.values()) {
+    clearTimeout(timer);
+  }
+  pendingRestoreTimers.clear();
+  for (const timer of pendingIdleRescanTimers.values()) {
+    clearTimeout(timer);
+  }
+  pendingIdleRescanTimers.clear();
   diagnosticCollection?.dispose();
+  outputChannel?.dispose();
 }
 
 // === Scan commands ===
 
 async function scanCurrentFile(): Promise<void> {
-  if (!(await ensureSemgrepForScan())) return;
-
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
     vscode.window.showWarningMessage("Vardionix: No active file to scan.");
     return;
   }
-  await scanFile(editor.document.uri.fsPath);
+  await triggerFileRescan(editor.document.uri.fsPath, "manual");
 }
 
-async function scanFile(filePath: string): Promise<void> {
+async function scanFile(
+  filePath: string,
+  options: {
+    showProgress?: boolean;
+    showSummary?: boolean;
+    trigger?: "manual" | "save" | "idle" | "code-action";
+  } = {},
+): Promise<void> {
   const cwd = getWorkspaceCwd();
   if (!cwd) return;
 
+  const {
+    showProgress = true,
+    showSummary = true,
+    trigger = "manual",
+  } = options;
   setStatusBarScanning();
+  const beforeOpenCount = countOpenFindingsForFile(filePath);
+
+  const runScan = async (progress?: { report: (value: { message?: string }) => void }) => {
+    progress?.report({ message: "Scanning file..." });
+
+    const result = await executeCli(["scan", "file", filePath], cwd, {
+      label: `scan file ${filePath}`,
+      revealOnError: true,
+    });
+
+    clearHiddenFindingsForFile(filePath);
+
+    if (!result.success) {
+      vscode.window.showErrorMessage(`Vardionix: Scan failed — ${result.error}`);
+      applyFindingsToUi();
+      return;
+    }
+
+    const scanResult = result.data as {
+      totalFindings: number;
+      totalExcluded: number;
+      findingsBySeverity?: Record<string, number>;
+    };
+
+    progress?.report({ message: "Loading results..." });
+    await loadAndDisplayFindings(cwd);
+    notifyFileDelta(filePath, beforeOpenCount, countOpenFindingsForFile(filePath), trigger);
+
+    if (showSummary) {
+      showScanSummary(
+        scanResult.totalFindings,
+        scanResult.totalExcluded,
+        "file",
+        scanResult.findingsBySeverity,
+      );
+    }
+  };
+
+  if (!showProgress) {
+    await runScan();
+    return;
+  }
 
   await vscode.window.withProgress(
     {
@@ -101,24 +206,7 @@ async function scanFile(filePath: string): Promise<void> {
       title: "Vardionix",
       cancellable: false,
     },
-    async (progress) => {
-      progress.report({ message: "Scanning file..." });
-
-      const result = await runVardionix(["scan", "file", filePath], cwd);
-
-      if (!result.success) {
-        vscode.window.showErrorMessage(`Vardionix: Scan failed — ${result.error}`);
-        syncStatusBar();
-        return;
-      }
-
-      const scanResult = result.data as { totalFindings: number; totalExcluded: number };
-
-      progress.report({ message: "Loading results..." });
-      await loadAndDisplayFindings(cwd);
-
-      showScanSummary(scanResult.totalFindings, scanResult.totalExcluded, "file");
-    },
+    runScan,
   );
 }
 
@@ -139,7 +227,10 @@ async function scanStagedFiles(): Promise<void> {
     async (progress) => {
       progress.report({ message: "Scanning staged files..." });
 
-      const result = await runVardionix(["scan", "staged"], cwd);
+      const result = await executeCli(["scan", "staged"], cwd, {
+        label: "scan staged files",
+        revealOnError: true,
+      });
 
       if (!result.success) {
         vscode.window.showErrorMessage(formatScanError(result.error, "staged"));
@@ -147,12 +238,21 @@ async function scanStagedFiles(): Promise<void> {
         return;
       }
 
-      const scanResult = result.data as { totalFindings: number; totalExcluded: number };
+      const scanResult = result.data as {
+        totalFindings: number;
+        totalExcluded: number;
+        findingsBySeverity?: Record<string, number>;
+      };
 
       progress.report({ message: "Loading results..." });
       await loadAndDisplayFindings(cwd);
 
-      showScanSummary(scanResult.totalFindings, scanResult.totalExcluded, "staged files");
+      showScanSummary(
+        scanResult.totalFindings,
+        scanResult.totalExcluded,
+        "staged files",
+        scanResult.findingsBySeverity,
+      );
     },
   );
 }
@@ -174,7 +274,10 @@ async function scanWorkspace(): Promise<void> {
     async (progress) => {
       progress.report({ message: "Scanning workspace..." });
 
-      const result = await runVardionix(["scan", "workspace"], cwd);
+      const result = await executeCli(["scan", "workspace"], cwd, {
+        label: "scan workspace",
+        revealOnError: true,
+      });
 
       if (!result.success) {
         vscode.window.showErrorMessage(formatScanError(result.error, "workspace"));
@@ -182,12 +285,21 @@ async function scanWorkspace(): Promise<void> {
         return;
       }
 
-      const scanResult = result.data as { totalFindings: number; totalExcluded: number };
+      const scanResult = result.data as {
+        totalFindings: number;
+        totalExcluded: number;
+        findingsBySeverity?: Record<string, number>;
+      };
 
       progress.report({ message: "Loading results..." });
       await loadAndDisplayFindings(cwd);
 
-      showScanSummary(scanResult.totalFindings, scanResult.totalExcluded, "workspace");
+      showScanSummary(
+        scanResult.totalFindings,
+        scanResult.totalExcluded,
+        "workspace",
+        scanResult.findingsBySeverity,
+      );
     },
   );
 }
@@ -204,7 +316,10 @@ async function listExcludedFindings(): Promise<void> {
   const cwd = getWorkspaceCwd();
   if (!cwd) return;
 
-  const result = await runVardionix(["findings", "list", "--excluded", "--workspace", cwd], cwd);
+  const result = await executeCli(["findings", "list", "--excluded", "--workspace", cwd], cwd, {
+    label: "list excluded findings",
+    revealOnError: true,
+  });
   if (!result.success) {
     vscode.window.showErrorMessage(`Vardionix: Failed to list excluded findings — ${result.error}`);
     return;
@@ -246,34 +361,40 @@ async function refreshFindings(): Promise<void> {
   await loadAndDisplayFindings(cwd);
 }
 
+async function rescanFindingFile(input?: { filePath?: string } | FindingItem | { finding?: Finding }): Promise<void> {
+  const filePath = resolveFindingFilePath(input);
+  if (!filePath) {
+    vscode.window.showWarningMessage("Vardionix: No file selected to rescan.");
+    return;
+  }
+
+  await triggerFileRescan(filePath, "code-action");
+}
+
 async function loadAndDisplayFindings(cwd: string): Promise<void> {
-  const result = await runVardionix(
-    ["findings", "list", "--open-only", "--workspace", cwd],
-    cwd,
-  );
+  const args = ["findings", "list", "--workspace", cwd];
+  const result = await executeCli(args, cwd, {
+    label: "list findings",
+    revealOnError: true,
+  });
 
   if (!result.success) {
     syncStatusBar();
     return;
   }
 
-  const findings = result.data as Finding[];
-  findingsTreeProvider.setFindings(findings);
-  updateDiagnostics(diagnosticCollection, findings);
-  syncStatusBar();
+  activeFindings = result.data as Finding[];
+  pruneHiddenFindingIds();
+  applyFindingsToUi();
 }
 
 async function explainFinding(item?: FindingItem | { finding?: Finding }): Promise<void> {
   const cwd = getWorkspaceCwd();
   if (!cwd) return;
 
-  let findingId: string | undefined;
+  let findingId = resolveFindingId(item);
 
-  if (item instanceof FindingItem) {
-    findingId = item.finding.id;
-  } else if (item?.finding) {
-    findingId = item.finding.id;
-  } else {
+  if (!findingId) {
     const findings = findingsTreeProvider.getFindings();
     if (findings.length === 0) {
       vscode.window.showInformationMessage("Vardionix: No findings available. Run a scan first.");
@@ -297,7 +418,10 @@ async function explainFinding(item?: FindingItem | { finding?: Finding }): Promi
     findingId = picked.findingId;
   }
 
-  const result = await runVardionix(["explain", findingId], cwd);
+  const result = await executeCli(["explain", findingId], cwd, {
+    label: `explain finding ${findingId}`,
+    revealOnError: true,
+  });
 
   if (!result.success) {
     vscode.window.showErrorMessage(`Vardionix: Failed to explain finding — ${result.error}`);
@@ -339,16 +463,10 @@ async function dismissFinding(item?: FindingItem | { finding?: Finding }): Promi
   const cwd = getWorkspaceCwd();
   if (!cwd) return;
 
-  let findingId: string | undefined;
-  let findingTitle: string | undefined;
+  let findingId = resolveFindingId(item);
+  let findingTitle = resolveFinding(item)?.title;
 
-  if (item instanceof FindingItem) {
-    findingId = item.finding.id;
-    findingTitle = item.finding.title;
-  } else if (item?.finding) {
-    findingId = item.finding.id;
-    findingTitle = item.finding.title;
-  } else {
+  if (!findingId) {
     const findings = findingsTreeProvider.getFindings();
     if (findings.length === 0) return;
 
@@ -399,7 +517,10 @@ async function dismissFinding(item?: FindingItem | { finding?: Finding }): Promi
     args.push("--reason", reasonText);
   }
 
-  const result = await runVardionix(args, cwd);
+  const result = await executeCli(args, cwd, {
+    label: `dismiss finding ${findingId}`,
+    revealOnError: true,
+  });
 
   if (result.success) {
     vscode.window.showInformationMessage(`Vardionix: Dismissed "${findingTitle}"`);
@@ -409,16 +530,19 @@ async function dismissFinding(item?: FindingItem | { finding?: Finding }): Promi
   }
 }
 
-async function showPolicy(): Promise<void> {
+async function showPolicy(input?: { policyId?: string | null } | FindingItem | { finding?: Finding }): Promise<void> {
   const cwd = getWorkspaceCwd();
   if (!cwd) return;
 
+  let policyId = resolvePolicyId(input);
+
   // Fetch policy list first for autocomplete
-  const listResult = await runVardionix(["policy", "list"], cwd);
+  const listResult = await executeCli(["policy", "list"], cwd, {
+    label: "list policies",
+    revealOnError: true,
+  });
 
-  let policyId: string | undefined;
-
-  if (listResult.success && Array.isArray(listResult.data) && listResult.data.length > 0) {
+  if (!policyId && listResult.success && Array.isArray(listResult.data) && listResult.data.length > 0) {
     const policies = listResult.data as Array<{ id: string; title: string; category: string }>;
     const picked = await vscode.window.showQuickPick(
       policies.map((p) => ({
@@ -435,7 +559,7 @@ async function showPolicy(): Promise<void> {
     );
     if (!picked) return;
     policyId = picked.policyId;
-  } else {
+  } else if (!policyId) {
     // Fallback to manual input
     policyId = await vscode.window.showInputBox({
       prompt: "Enter policy ID",
@@ -445,7 +569,10 @@ async function showPolicy(): Promise<void> {
 
   if (!policyId) return;
 
-  const result = await runVardionix(["policy", "show", policyId], cwd);
+  const result = await executeCli(["policy", "show", policyId], cwd, {
+    label: `show policy ${policyId}`,
+    revealOnError: true,
+  });
 
   if (!result.success) {
     vscode.window.showErrorMessage(`Vardionix: Policy not found — ${policyId}`);
@@ -569,6 +696,71 @@ function getWorkspaceCwd(): string | undefined {
   return folders[0].uri.fsPath;
 }
 
+function getRelativeFileLabel(filePath: string): string {
+  const cwd = getWorkspaceCwd();
+  return cwd && filePath.startsWith(cwd) ? filePath.slice(cwd.length + 1) : filePath;
+}
+
+function getCurrentEditorFilePath(): string | undefined {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || editor.document.uri.scheme !== "file") {
+    return undefined;
+  }
+
+  return editor.document.uri.fsPath;
+}
+
+function getRuntimeConfig(resource?: vscode.Uri) {
+  const config = vscode.workspace.getConfiguration("vardionix", resource);
+  return {
+    hideTouchedFindingsImmediately: config.get<boolean>("hideTouchedFindingsImmediately", true),
+    rescanOnIdle: config.get<boolean>("rescanOnIdle", true),
+    rescanDebounceMs: Math.max(250, config.get<number>("rescanDebounceMs", 1500)),
+    rescanOnSave: config.get<boolean>("rescanOnSave", true),
+    legacyScanOnSave: config.get<boolean>("scanOnSave", false),
+  };
+}
+
+async function executeCli(
+  args: string[],
+  cwd: string,
+  options: {
+    label: string;
+    revealOnError?: boolean;
+  },
+) {
+  appendOutput(`> vardionix ${args.join(" ")}`);
+  appendOutput(`cwd: ${cwd}`);
+
+  const result = await runVardionix(args, cwd);
+
+  if (result.success) {
+    appendOutput(`ok: ${options.label} (${describeCliResult(result.data)})`);
+  } else {
+    appendOutput(`error: ${options.label}`);
+    appendOutput(result.error ?? "Unknown error");
+    if (options.revealOnError) {
+      outputChannel?.show(true);
+    }
+  }
+
+  return result;
+}
+
+function appendOutput(message: string): void {
+  outputChannel?.appendLine(`[${new Date().toISOString()}] ${message}`);
+}
+
+function describeCliResult(data: unknown): string {
+  if (Array.isArray(data)) {
+    return `${data.length} item(s)`;
+  }
+  if (data && typeof data === "object") {
+    return "object";
+  }
+  return String(data ?? "empty");
+}
+
 async function ensureSemgrepForScan(): Promise<boolean> {
   if (!semgrepStorageUri) {
     vscode.window.showErrorMessage("Vardionix: Extension storage is not ready yet. Please retry.");
@@ -607,6 +799,418 @@ function syncStatusBar(): void {
   updateStatusBar(findingsTreeProvider.getSeverityCounts());
 }
 
+async function configureFindingsView(): Promise<void> {
+  const picked = await vscode.window.showQuickPick(
+    [
+      {
+        label: `${viewState.currentFileOnly ? "$(check)" : "$(circle-large-outline)"} Focus Current File`,
+        detail: viewState.currentFileOnly ? "Only show findings for the active editor." : "Show findings across the workspace.",
+        action: "toggle-current-file" as const,
+      },
+      {
+        label: `${viewState.showDismissed ? "$(check)" : "$(circle-large-outline)"} Show Dismissed Findings`,
+        detail: viewState.showDismissed ? "Dismissed findings are visible." : "Dismissed findings are hidden.",
+        action: "toggle-dismissed" as const,
+      },
+      {
+        label: `${viewState.showPendingVerification ? "$(check)" : "$(circle-large-outline)"} Show Pending Verification`,
+        detail: viewState.showPendingVerification ? "Touched findings stay visible as pending." : "Touched findings are hidden until confirmed.",
+        action: "toggle-pending" as const,
+      },
+      {
+        label: `Grouping: ${viewState.groupBy === "file" ? "File → Severity" : "Severity"}`,
+        detail: "Choose how findings are grouped in the sidebar.",
+        action: "grouping" as const,
+      },
+      {
+        label: `Minimum Severity: ${severityLabel(viewState.minimumSeverity === "all" ? undefined : viewState.minimumSeverity) || "All"}`,
+        detail: "Hide lower-severity findings from the sidebar and diagnostics.",
+        action: "minimum-severity" as const,
+      },
+    ],
+    {
+      placeHolder: "Configure the Vardionix findings view",
+      matchOnDescription: true,
+      matchOnDetail: true,
+    },
+  );
+
+  if (!picked) {
+    return;
+  }
+
+  switch (picked.action) {
+    case "toggle-current-file":
+      viewState.currentFileOnly = !viewState.currentFileOnly;
+      break;
+    case "toggle-dismissed":
+      viewState.showDismissed = !viewState.showDismissed;
+      break;
+    case "toggle-pending":
+      viewState.showPendingVerification = !viewState.showPendingVerification;
+      break;
+    case "grouping":
+      await pickGroupingMode();
+      break;
+    case "minimum-severity":
+      await pickMinimumSeverity();
+      break;
+  }
+
+  findingsTreeProvider.setGrouping(viewState.groupBy);
+  applyFindingsToUi();
+}
+
+async function pickGroupingMode(): Promise<void> {
+  const picked = await vscode.window.showQuickPick(
+    [
+      { label: "File → Severity", value: "file" as const },
+      { label: "Severity", value: "severity" as const },
+    ],
+    {
+      placeHolder: "Choose how to group findings",
+    },
+  );
+
+  if (picked) {
+    viewState.groupBy = picked.value;
+  }
+}
+
+async function pickMinimumSeverity(): Promise<void> {
+  const picked = await vscode.window.showQuickPick(
+    [
+      { label: "All severities", value: "all" as const },
+      { label: "Critical only", value: "critical" as const },
+      { label: "High and above", value: "high" as const },
+      { label: "Medium and above", value: "medium" as const },
+      { label: "Low and above", value: "low" as const },
+      { label: "Info and above", value: "info" as const },
+    ],
+    {
+      placeHolder: "Choose the minimum severity to show",
+    },
+  );
+
+  if (picked) {
+    viewState.minimumSeverity = picked.value;
+  }
+}
+
+async function toggleCurrentFileOnly(): Promise<void> {
+  viewState.currentFileOnly = !viewState.currentFileOnly;
+  applyFindingsToUi();
+}
+
+async function handleDocumentChange(event: vscode.TextDocumentChangeEvent): Promise<void> {
+  if (event.document.uri.scheme !== "file") {
+    return;
+  }
+
+  if (event.contentChanges.length === 0) {
+    if (!event.document.isDirty) {
+      scheduleHiddenFindingsRestore(event.document.uri.fsPath);
+    }
+    return;
+  }
+
+  cancelPendingRestore(event.document.uri.fsPath);
+  cancelPendingIdleRescan(event.document.uri.fsPath);
+  const runtime = getRuntimeConfig(event.document.uri);
+
+  const fileFindings = activeFindings.filter((finding) =>
+    finding.filePath === event.document.uri.fsPath && finding.status === "open"
+  );
+  if (fileFindings.length === 0) {
+    return;
+  }
+
+  let changed = false;
+  for (const finding of fileFindings) {
+    if (pendingVerificationFindingIds.has(finding.id)) {
+      continue;
+    }
+
+    if (event.contentChanges.some((change) => overlapsFinding(change.range, finding))) {
+      if (runtime.hideTouchedFindingsImmediately) {
+        pendingVerificationFindingIds.add(finding.id);
+      }
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    applyFindingsToUi();
+  }
+
+  if (runtime.rescanOnIdle && hasVisibleOrHiddenFindingsForFile(event.document.uri.fsPath)) {
+    scheduleIdleFileRescan(event.document);
+  }
+}
+
+async function handleDocumentSave(document: vscode.TextDocument): Promise<void> {
+  if (document.uri.scheme !== "file") {
+    return;
+  }
+
+  const filePath = document.uri.fsPath;
+  const runtime = getRuntimeConfig(document.uri);
+  cancelPendingIdleRescan(filePath);
+  cancelPendingRestore(filePath);
+  const shouldRefreshFile = runtime.legacyScanOnSave
+    || (runtime.rescanOnSave && hasVisibleOrHiddenFindingsForFile(filePath));
+
+  if (!shouldRefreshFile) {
+    clearHiddenFindingsForFile(filePath);
+    applyFindingsToUi();
+    return;
+  }
+
+  await triggerFileRescan(filePath, "save");
+}
+
+function hasVisibleOrHiddenFindingsForFile(filePath: string): boolean {
+  return activeFindings.some((finding) => finding.filePath === filePath && finding.status === "open")
+    || Array.from(pendingVerificationFindingIds).some((id) =>
+      activeFindings.some((finding) => finding.id === id && finding.filePath === filePath)
+    );
+}
+
+function applyFindingsToUi(): void {
+  const visibleFindings = getVisibleFindings();
+  findingsTreeProvider.setGrouping(viewState.groupBy);
+  findingsTreeProvider.setFindings(visibleFindings);
+  updateDiagnostics(
+    diagnosticCollection,
+    visibleFindings.filter((finding) => finding.pendingVerification || finding.status === "open"),
+  );
+  updateFindingsViewDescription(visibleFindings);
+  syncStatusBar();
+}
+
+function scheduleHiddenFindingsRestore(filePath: string): void {
+  cancelPendingRestore(filePath);
+  pendingRestoreTimers.set(
+    filePath,
+    setTimeout(() => {
+      pendingRestoreTimers.delete(filePath);
+      restoreHiddenFindingsForFile(filePath);
+    }, 150),
+  );
+}
+
+function cancelPendingRestore(filePath: string): void {
+  const timer = pendingRestoreTimers.get(filePath);
+  if (!timer) {
+    return;
+  }
+
+  clearTimeout(timer);
+  pendingRestoreTimers.delete(filePath);
+}
+
+function scheduleIdleFileRescan(document: vscode.TextDocument): void {
+  const filePath = document.uri.fsPath;
+  cancelPendingIdleRescan(filePath);
+  const runtime = getRuntimeConfig(document.uri);
+  pendingIdleRescanTimers.set(
+    filePath,
+    setTimeout(() => {
+      pendingIdleRescanTimers.delete(filePath);
+      if (document.isDirty) {
+        appendOutput(`idle rescan skipped for ${filePath} because the document has unsaved changes`);
+        return;
+      }
+      void triggerFileRescan(filePath, "idle");
+    }, runtime.rescanDebounceMs),
+  );
+}
+
+function cancelPendingIdleRescan(filePath: string): void {
+  const timer = pendingIdleRescanTimers.get(filePath);
+  if (!timer) {
+    return;
+  }
+
+  clearTimeout(timer);
+  pendingIdleRescanTimers.delete(filePath);
+}
+
+async function triggerFileRescan(
+  filePath: string,
+  trigger: "manual" | "save" | "idle" | "code-action",
+): Promise<void> {
+  const existing = runningFileScans.get(filePath);
+  if (existing) {
+    return existing;
+  }
+
+  const promise = (async () => {
+    if (!(await ensureSemgrepForScan())) {
+      return;
+    }
+
+    await scanFile(filePath, {
+      showProgress: trigger === "manual" || trigger === "code-action",
+      showSummary: trigger === "manual",
+      trigger,
+    });
+  })().finally(() => {
+    runningFileScans.delete(filePath);
+  });
+
+  runningFileScans.set(filePath, promise);
+  return promise;
+}
+
+function getVisibleFindings(): Finding[] {
+  const currentFilePath = viewState.currentFileOnly ? getCurrentEditorFilePath() : undefined;
+
+  return activeFindings
+    .map((finding) => ({
+      ...finding,
+      pendingVerification: pendingVerificationFindingIds.has(finding.id),
+    }))
+    .filter((finding) => viewState.showDismissed || finding.status === "open" || finding.pendingVerification)
+    .filter((finding) => !currentFilePath || finding.filePath === currentFilePath)
+    .filter((finding) => meetsMinimumSeverity(finding, viewState.minimumSeverity))
+    .filter((finding) => viewState.showPendingVerification || !finding.pendingVerification);
+}
+
+function updateFindingsViewDescription(findings: Finding[]): void {
+  if (!findingsTreeView) {
+    return;
+  }
+
+  const parts: string[] = [];
+  if (viewState.currentFileOnly) {
+    parts.push("Current file");
+  }
+  if (viewState.minimumSeverity !== "all") {
+    parts.push(`>= ${viewState.minimumSeverity}`);
+  }
+  if (viewState.showDismissed) {
+    parts.push("Dismissed");
+  }
+  if (findings.some((finding) => finding.pendingVerification)) {
+    parts.push("Pending");
+  }
+
+  findingsTreeView.description = parts.join(" · ");
+  findingsTreeView.message = findings.length === 0
+    ? viewState.currentFileOnly
+      ? "No findings match the current file filters."
+      : undefined
+    : undefined;
+}
+
+function pruneHiddenFindingIds(): void {
+  const activeFindingIds = new Set(activeFindings.map((finding) => finding.id));
+  for (const id of Array.from(pendingVerificationFindingIds)) {
+    if (!activeFindingIds.has(id)) {
+      pendingVerificationFindingIds.delete(id);
+    }
+  }
+}
+
+function clearHiddenFindingsForFile(filePath: string): void {
+  for (const finding of activeFindings) {
+    if (finding.filePath === filePath) {
+      pendingVerificationFindingIds.delete(finding.id);
+    }
+  }
+}
+
+function restoreHiddenFindingsForFile(filePath: string): void {
+  const before = pendingVerificationFindingIds.size;
+  clearHiddenFindingsForFile(filePath);
+  if (pendingVerificationFindingIds.size !== before) {
+    applyFindingsToUi();
+  }
+}
+
+function overlapsFinding(range: vscode.Range, finding: Finding): boolean {
+  const changeStartLine = range.start.line + 1;
+  const changeEndLine = range.end.line + 1;
+  return changeStartLine <= finding.endLine && changeEndLine >= finding.startLine;
+}
+
+function resolveFinding(input?: FindingItem | { finding?: Finding } | { finding?: { id?: string } } | { filePath?: string }): Finding | undefined {
+  if (input instanceof FindingItem) {
+    return input.finding;
+  }
+
+  const candidate = input as { finding?: { id?: string } } | undefined;
+  const findingId = candidate?.finding?.id;
+  if (!findingId) {
+    return undefined;
+  }
+
+  return activeFindings.find((finding) => finding.id === findingId)
+    ?? findingsTreeProvider.getFindings().find((finding) => finding.id === findingId);
+}
+
+function resolveFindingId(input?: FindingItem | { finding?: Finding } | { finding?: { id?: string } }): string | undefined {
+  return resolveFinding(input)?.id ?? (input as { finding?: { id?: string } } | undefined)?.finding?.id;
+}
+
+function resolveFindingFilePath(input?: { filePath?: string } | FindingItem | { finding?: Finding }): string | undefined {
+  if (input instanceof FindingItem) {
+    return input.finding.filePath;
+  }
+
+  const candidate = input as { filePath?: string } | undefined;
+  if (candidate?.filePath) {
+    return candidate.filePath;
+  }
+
+  return resolveFinding(input)?.filePath ?? getCurrentEditorFilePath();
+}
+
+function resolvePolicyId(input?: { policyId?: string | null } | FindingItem | { finding?: Finding }): string | undefined {
+  if (input instanceof FindingItem) {
+    return input.finding.policyId ?? undefined;
+  }
+
+  const candidate = input as { policyId?: string | null } | undefined;
+  if (candidate?.policyId) {
+    return candidate.policyId ?? undefined;
+  }
+
+  return resolveFinding(input as FindingItem | { finding?: Finding } | undefined)?.policyId ?? undefined;
+}
+
+function countOpenFindingsForFile(filePath: string): number {
+  return activeFindings.filter((finding) => finding.filePath === filePath && finding.status === "open").length;
+}
+
+function notifyFileDelta(
+  filePath: string,
+  beforeCount: number,
+  afterCount: number,
+  trigger: "manual" | "save" | "idle" | "code-action",
+): void {
+  if (trigger === "manual") {
+    return;
+  }
+
+  if (beforeCount === afterCount) {
+    return;
+  }
+
+  const fileLabel = getRelativeFileLabel(filePath);
+
+  if (afterCount < beforeCount) {
+    const cleared = beforeCount - afterCount;
+    const remainText = afterCount === 0 ? "No open findings remain." : `${afterCount} open finding(s) remain.`;
+    vscode.window.showInformationMessage(`Vardionix: Cleared ${cleared} warning(s) in ${fileLabel}. ${remainText}`);
+    return;
+  }
+
+  const added = afterCount - beforeCount;
+  vscode.window.showWarningMessage(`Vardionix: ${added} new warning(s) detected in ${fileLabel}. ${afterCount} open finding(s) now.`);
+}
+
 function severityLabel(sev: string | null | undefined): string {
   if (!sev) return "";
   const icons: Record<string, string> = {
@@ -619,13 +1223,18 @@ function severityLabel(sev: string | null | undefined): string {
   return icons[sev] ?? sev;
 }
 
-function showScanSummary(totalFindings: number, totalExcluded: number, scope: string): void {
+function showScanSummary(
+  totalFindings: number,
+  totalExcluded: number,
+  scope: string,
+  findingsBySeverity?: Record<string, number>,
+): void {
   if (totalFindings === 0 && totalExcluded === 0) {
     vscode.window.showInformationMessage(`Vardionix: No issues found in ${scope}.`);
     return;
   }
 
-  const counts = findingsTreeProvider.getSeverityCounts();
+  const counts = findingsBySeverity ?? findingsTreeProvider.getSeverityCounts();
   const parts: string[] = [];
 
   const critical = counts.critical ?? 0;

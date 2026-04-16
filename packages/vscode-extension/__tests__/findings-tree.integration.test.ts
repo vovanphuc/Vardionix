@@ -52,6 +52,12 @@ vi.mock("vscode", () => {
     TreeItem,
     ThemeIcon,
     ThemeColor,
+    DiagnosticSeverity: {
+      Error: 0,
+      Warning: 1,
+      Information: 2,
+      Hint: 3,
+    },
     MarkdownString,
     Range,
     TreeItemCollapsibleState: {
@@ -73,7 +79,7 @@ vi.mock("vscode", () => {
 import { FindingsTreeProvider } from "../src/findings-tree.js";
 
 describe("FindingsTreeProvider integration", () => {
-  it("keeps only open active findings and groups by effective severity", () => {
+  it("groups findings by file and keeps pending verification separate", () => {
     const provider = new FindingsTreeProvider();
 
     provider.setFindings([
@@ -90,17 +96,6 @@ describe("FindingsTreeProvider integration", () => {
       },
       {
         kind: "active",
-        id: "F-closed",
-        severity: "critical",
-        status: "dismissed",
-        title: "Dismissed issue",
-        message: "Dismissed",
-        filePath: "/repo/src/closed.js",
-        startLine: 5,
-        endLine: 5,
-      },
-      {
-        kind: "active",
         id: "F-high",
         severity: "medium",
         policySeverityOverride: "critical",
@@ -111,22 +106,43 @@ describe("FindingsTreeProvider integration", () => {
         startLine: 8,
         endLine: 8,
       },
+      {
+        kind: "active",
+        id: "F-pending",
+        severity: "medium",
+        status: "open",
+        title: "Pending issue",
+        message: "Pending",
+        filePath: "/repo/src/pending.js",
+        startLine: 10,
+        endLine: 10,
+        pendingVerification: true,
+      },
     ] as any);
 
-    // Only open findings kept
-    expect(provider.getFindings().map((f) => f.id)).toEqual(["F-low", "F-high"]);
+    expect(provider.getFindings().map((f) => f.id)).toEqual(["F-low", "F-high", "F-pending"]);
 
-    // Root children are severity groups
     const groups = provider.getChildren();
-    expect(groups.map((g) => g.label)).toEqual(["Critical", "Low"]);
+    expect(groups.map((g) => g.label)).toEqual(["Pending Verification", "src/high.js", "src/low.js"]);
 
-    // Children of severity group are findings
-    const criticalFindings = provider.getChildren(groups[0]);
-    expect(criticalFindings).toHaveLength(1);
-    expect(criticalFindings[0].label).toBe("Escalated issue");
-    expect(criticalFindings[0].description).toBe("src/high.js:8");
+    const pendingFindings = provider.getChildren(groups[0]);
+    expect(pendingFindings).toHaveLength(1);
+    expect(pendingFindings[0].label).toBe("Pending issue (Pending verification)");
 
-    const lowFindings = provider.getChildren(groups[1]);
+    const highFileSeverities = provider.getChildren(groups[1]);
+    expect(highFileSeverities).toHaveLength(1);
+    expect(highFileSeverities[0].label).toBe("Critical");
+
+    const highFindings = provider.getChildren(highFileSeverities[0]);
+    expect(highFindings).toHaveLength(1);
+    expect(highFindings[0].label).toBe("Escalated issue");
+    expect(highFindings[0].description).toBe("src/high.js:8");
+
+    const lowFileSeverities = provider.getChildren(groups[2]);
+    expect(lowFileSeverities).toHaveLength(1);
+    expect(lowFileSeverities[0].label).toBe("Low");
+
+    const lowFindings = provider.getChildren(lowFileSeverities[0]);
     expect(lowFindings).toHaveLength(1);
     expect(lowFindings[0].label).toBe("Low issue");
 

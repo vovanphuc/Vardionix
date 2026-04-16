@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.8
+
+### Findings UX
+- Added pending verification state when a touched finding is being revalidated
+- Added file-first grouping, current-file focus, minimum-severity filtering, and optional dismissed/pending visibility in the findings view
+- Added delta feedback after rescans so users can see when warnings were cleared or newly detected
+
+### Editor Integration
+- Added quick actions from diagnostics and the Problems panel for explain, dismiss, show policy, and rescan file
+- Added idle and save-based file rescans with debounce-aware background scheduling
+- Added clearer Vardionix output logging for scan and refresh operations
+
+### Documentation
+- Updated the extension README to explain automatic Semgrep setup and when manual installation is still needed
+
 ## 0.1.7
 
 ### AI Triage Integration
